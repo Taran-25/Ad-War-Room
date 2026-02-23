@@ -472,13 +472,17 @@ export default function IntelligenceHub() {
         <div className="text-xs text-gray-500 space-y-0.5">
           <p>
             Cache status:{' '}
-            <span className={`font-semibold ${cacheStats.freshCount === cacheStats.total ? 'text-green-600' : cacheStats.freshCount === 0 ? 'text-red-500' : 'text-amber-600'}`}>
-              {cacheStats.freshCount}/{cacheStats.total} competitors loaded
-            </span>
-            {cacheStats.lastRefreshStr && (
+            {adsLoading ? (
+              <span className="text-gray-400 animate-pulse">Checking cache…</span>
+            ) : (
+              <span className={`font-semibold ${cacheStats.freshCount === cacheStats.total ? 'text-green-600' : cacheStats.freshCount === 0 ? 'text-red-500' : 'text-amber-600'}`}>
+                {cacheStats.freshCount}/{cacheStats.total} competitors loaded
+              </span>
+            )}
+            {!adsLoading && cacheStats.lastRefreshStr && (
               <span className="text-gray-400"> · Last refresh: {cacheStats.lastRefreshStr}</span>
             )}
-            {cacheStats.nextRefreshIn && (
+            {!adsLoading && cacheStats.nextRefreshIn && (
               <span className="text-gray-400"> · Next expiry in: {cacheStats.nextRefreshIn}</span>
             )}
           </p>
@@ -489,14 +493,16 @@ export default function IntelligenceHub() {
           )}
         </div>
 
-        {/* Fetch button */}
+        {/* Fetch button — disabled until initial cache check completes */}
         <button
           onClick={handleFetchFreshAds}
-          disabled={isFetching}
+          disabled={isFetching || adsLoading}
           className="flex items-center gap-2 px-4 py-2 text-sm font-semibold bg-amber-500 hover:bg-amber-600 disabled:opacity-60 disabled:cursor-not-allowed text-white rounded-lg transition-colors flex-shrink-0"
         >
           {isFetching ? (
             <><span className="animate-spin inline-block">⏳</span> Fetching…</>
+          ) : adsLoading ? (
+            <><span className="animate-pulse">⏳</span> Loading…</>
           ) : (
             <>
               <span>⬇</span>
