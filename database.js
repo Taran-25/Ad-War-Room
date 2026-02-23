@@ -1,89 +1,85 @@
 /**
  * database.js
- * SQLite database layer using better-sqlite3.
- * Provides two tables:
- *   - ads_cache: caches raw ad data per competitor (6hr TTL used by server)
- *   - ai_briefs: stores Gemini-generated analysis briefs (1hr minimum TTL)
+ * SQLite database layer using @libsql/client (Turso / local LibSQL file).
+ *
+ * Local dev  → TURSO_DATABASE_URL unset → falls back to file:ad_war_room.db
+ * Production → set TURSO_DATABASE_URL + TURSO_AUTH_TOKEN in env
+ *
+ * All functions are async (await client.execute / client.batch).
  */
 
-const Database = require('better-sqlite3');
-const path = require('path');
+const { createClient } = require('@libsql/client');
 
-const DB_PATH = path.join(__dirname, 'ad_war_room.db');
-
-// Open (or create) the SQLite database file
-const db = new Database(DB_PATH);
-
-// Enable WAL mode for better concurrent read performance
-db.pragma('journal_mode = WAL');
+const client = createClient({
+  url: process.env.TURSO_DATABASE_URL || 'file:ad_war_room.db',
+  authToken: process.env.TURSO_AUTH_TOKEN, // undefined locally = OK
+});
 
 // ─── Schema ──────────────────────────────────────────────────────────────────
 
-db.exec(`
-  CREATE TABLE IF NOT EXISTS ads_cache (
-    id           INTEGER PRIMARY KEY AUTOINCREMENT,
-    company_name TEXT    NOT NULL,
-    ad_data      TEXT    NOT NULL,   -- JSON array of ad objects
-    fetched_at   INTEGER NOT NULL    -- Unix timestamp (seconds)
+async function initSchema() {
+  await client.batch(
+    [
+      `CREATE TABLE IF NOT EXISTS ads_cache (
+        id           INTEGER PRIMARY KEY AUTOINCREMENT,
+        company_name TEXT    NOT NULL,
+        ad_data      TEXT    NOT NULL,
+        fetched_at   INTEGER NOT NULL
+      )`,
+      `CREATE INDEX IF NOT EXISTS idx_ads_company ON ads_cache (company_name)`,
+      `CREATE INDEX IF NOT EXISTS idx_ads_fetched  ON ads_cache (fetched_at)`,
+      `CREATE TABLE IF NOT EXISTS ai_briefs (
+        id             INTEGER PRIMARY KEY AUTOINCREMENT,
+        brief_data     TEXT    NOT NULL,
+        created_at     INTEGER NOT NULL,
+        ad_count       INTEGER NOT NULL DEFAULT 0,
+        brands_covered TEXT    NOT NULL DEFAULT ''
+      )`,
+      `CREATE INDEX IF NOT EXISTS idx_briefs_created ON ai_briefs (created_at)`,
+      `CREATE TABLE IF NOT EXISTS competitor_profiles (
+        id           INTEGER PRIMARY KEY AUTOINCREMENT,
+        company_name TEXT NOT NULL,
+        summary      TEXT NOT NULL,
+        created_at   INTEGER NOT NULL
+      )`,
+      `CREATE INDEX IF NOT EXISTS idx_profiles_company ON competitor_profiles (company_name)`,
+      `CREATE TABLE IF NOT EXISTS ad_score_cache (
+        id         INTEGER PRIMARY KEY AUTOINCREMENT,
+        cache_key  TEXT NOT NULL,
+        score_data TEXT NOT NULL,
+        created_at INTEGER NOT NULL
+      )`,
+      `CREATE INDEX IF NOT EXISTS idx_scores_key ON ad_score_cache (cache_key)`,
+      `CREATE TABLE IF NOT EXISTS reddit_cache (
+        id          INTEGER PRIMARY KEY AUTOINCREMENT,
+        brand       TEXT NOT NULL,
+        reddit_data TEXT NOT NULL,
+        created_at  INTEGER NOT NULL
+      )`,
+      `CREATE INDEX IF NOT EXISTS idx_reddit_brand ON reddit_cache (brand)`,
+    ],
+    'write'
   );
-
-  CREATE INDEX IF NOT EXISTS idx_ads_company ON ads_cache (company_name);
-  CREATE INDEX IF NOT EXISTS idx_ads_fetched ON ads_cache (fetched_at);
-
-  CREATE TABLE IF NOT EXISTS ai_briefs (
-    id             INTEGER PRIMARY KEY AUTOINCREMENT,
-    brief_data     TEXT    NOT NULL,   -- JSON object returned by Gemini
-    created_at     INTEGER NOT NULL,   -- Unix timestamp (seconds)
-    ad_count       INTEGER NOT NULL DEFAULT 0,
-    brands_covered TEXT    NOT NULL DEFAULT ''  -- comma-separated brand names
-  );
-
-  CREATE INDEX IF NOT EXISTS idx_briefs_created ON ai_briefs (created_at);
-
-  CREATE TABLE IF NOT EXISTS competitor_profiles (
-    id           INTEGER PRIMARY KEY AUTOINCREMENT,
-    company_name TEXT NOT NULL,
-    summary      TEXT NOT NULL,
-    created_at   INTEGER NOT NULL
-  );
-  CREATE INDEX IF NOT EXISTS idx_profiles_company ON competitor_profiles (company_name);
-
-  CREATE TABLE IF NOT EXISTS ad_score_cache (
-    id         INTEGER PRIMARY KEY AUTOINCREMENT,
-    cache_key  TEXT NOT NULL,
-    score_data TEXT NOT NULL,
-    created_at INTEGER NOT NULL
-  );
-  CREATE INDEX IF NOT EXISTS idx_scores_key ON ad_score_cache (cache_key);
-
-  CREATE TABLE IF NOT EXISTS reddit_cache (
-    id          INTEGER PRIMARY KEY AUTOINCREMENT,
-    brand       TEXT NOT NULL,
-    reddit_data TEXT NOT NULL,
-    created_at  INTEGER NOT NULL
-  );
-  CREATE INDEX IF NOT EXISTS idx_reddit_brand ON reddit_cache (brand);
-`);
+}
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────
 
 /**
  * Return cached ads for a company if fresher than maxAgeHours.
- * @param {string} company     - Competitor company name
- * @param {number} maxAgeHours - Maximum acceptable cache age in hours
- * @returns {Array|null} Parsed ad array or null if cache miss/expired
+ * @param {string} company
+ * @param {number} maxAgeHours
+ * @returns {Promise<Array|null>}
  */
-function getCachedAds(company, maxAgeHours = 6) {
+async function getCachedAds(company, maxAgeHours = 6) {
   const cutoff = Math.floor(Date.now() / 1000) - maxAgeHours * 3600;
-  const row = db
-    .prepare(
-      `SELECT ad_data FROM ads_cache
-       WHERE company_name = ? AND fetched_at > ?
-       ORDER BY fetched_at DESC
-       LIMIT 1`
-    )
-    .get(company, cutoff);
-
+  const result = await client.execute({
+    sql: `SELECT ad_data FROM ads_cache
+          WHERE company_name = ? AND fetched_at > ?
+          ORDER BY fetched_at DESC
+          LIMIT 1`,
+    args: [company, cutoff],
+  });
+  const row = result.rows[0];
   if (!row) return null;
   try {
     return JSON.parse(row.ad_data);
@@ -94,53 +90,54 @@ function getCachedAds(company, maxAgeHours = 6) {
 
 /**
  * Save (or replace) ads for a company into the cache.
- * Deletes old entries for the same company to keep the table lean.
- * @param {string} company - Competitor company name
- * @param {Array}  ads     - Array of ad objects to cache
+ * @param {string} company
+ * @param {Array}  ads
  */
-function saveAds(company, ads) {
+async function saveAds(company, ads) {
   const now = Math.floor(Date.now() / 1000);
-  // Remove previous cache entries for this company
-  db.prepare('DELETE FROM ads_cache WHERE company_name = ?').run(company);
-  db.prepare(
-    'INSERT INTO ads_cache (company_name, ad_data, fetched_at) VALUES (?, ?, ?)'
-  ).run(company, JSON.stringify(ads), now);
+  await client.batch(
+    [
+      { sql: 'DELETE FROM ads_cache WHERE company_name = ?', args: [company] },
+      {
+        sql: 'INSERT INTO ads_cache (company_name, ad_data, fetched_at) VALUES (?, ?, ?)',
+        args: [company, JSON.stringify(ads), now],
+      },
+    ],
+    'write'
+  );
 }
 
 /**
  * Persist a Gemini-generated brief.
- * @param {object} brief         - Parsed JSON brief from Gemini
- * @param {number} adCount       - Number of ads that were analyzed
- * @param {string} brandsCovered - Comma-separated list of brands
  */
-function saveAiBrief(brief, adCount = 0, brandsCovered = '') {
+async function saveAiBrief(brief, adCount = 0, brandsCovered = '') {
   const now = Math.floor(Date.now() / 1000);
-  db.prepare(
-    `INSERT INTO ai_briefs (brief_data, created_at, ad_count, brands_covered)
-     VALUES (?, ?, ?, ?)`
-  ).run(JSON.stringify(brief), now, adCount, brandsCovered);
+  await client.execute({
+    sql: `INSERT INTO ai_briefs (brief_data, created_at, ad_count, brands_covered)
+          VALUES (?, ?, ?, ?)`,
+    args: [JSON.stringify(brief), now, adCount, brandsCovered],
+  });
 }
 
 /**
  * Return the most recently stored AI brief (any brand).
- * @returns {{ brief: object, created_at: number, ad_count: number, brands_covered: string }|null}
+ * @returns {Promise<{ brief: object, created_at: number, ad_count: number, brands_covered: string }|null>}
  */
-function getLatestBrief() {
-  const row = db
-    .prepare(
-      `SELECT brief_data, created_at, ad_count, brands_covered
-       FROM ai_briefs
-       ORDER BY created_at DESC
-       LIMIT 1`
-    )
-    .get();
-
+async function getLatestBrief() {
+  const result = await client.execute({
+    sql: `SELECT brief_data, created_at, ad_count, brands_covered
+          FROM ai_briefs
+          ORDER BY created_at DESC
+          LIMIT 1`,
+    args: [],
+  });
+  const row = result.rows[0];
   if (!row) return null;
   try {
     return {
       brief: JSON.parse(row.brief_data),
-      created_at: row.created_at,
-      ad_count: row.ad_count,
+      created_at: Number(row.created_at),
+      ad_count: Number(row.ad_count),
       brands_covered: row.brands_covered,
     };
   } catch {
@@ -149,30 +146,28 @@ function getLatestBrief() {
 }
 
 /**
- * Return the most recent brief for a specific brand key (brands_covered value),
- * if it was created within maxAgeHours.
- * @param {string} brand       - Exact brands_covered value (e.g. 'All', 'Man Matters')
- * @param {number} maxAgeHours - Maximum acceptable age in hours
- * @returns {{ brief: object, created_at: number, ad_count: number, brands_covered: string }|null}
+ * Return the most recent brief for a specific brand key if within maxAgeHours.
+ * @param {string} brand
+ * @param {number} maxAgeHours
+ * @returns {Promise<{ brief: object, created_at: number, ad_count: number, brands_covered: string }|null>}
  */
-function getBriefByBrand(brand, maxAgeHours = 1) {
+async function getBriefByBrand(brand, maxAgeHours = 1) {
   const cutoff = Math.floor(Date.now() / 1000) - maxAgeHours * 3600;
-  const row = db
-    .prepare(
-      `SELECT brief_data, created_at, ad_count, brands_covered
-       FROM ai_briefs
-       WHERE brands_covered = ? AND created_at > ?
-       ORDER BY created_at DESC
-       LIMIT 1`
-    )
-    .get(brand, cutoff);
-
+  const result = await client.execute({
+    sql: `SELECT brief_data, created_at, ad_count, brands_covered
+          FROM ai_briefs
+          WHERE brands_covered = ? AND created_at > ?
+          ORDER BY created_at DESC
+          LIMIT 1`,
+    args: [brand, cutoff],
+  });
+  const row = result.rows[0];
   if (!row) return null;
   try {
     return {
       brief: JSON.parse(row.brief_data),
-      created_at: row.created_at,
-      ad_count: row.ad_count,
+      created_at: Number(row.created_at),
+      ad_count: Number(row.ad_count),
       brands_covered: row.brands_covered,
     };
   } catch {
@@ -182,49 +177,50 @@ function getBriefByBrand(brand, maxAgeHours = 1) {
 
 /**
  * Return cache metadata for a company regardless of age.
- * @param {string} company - Competitor company name
- * @returns {{ fetched_at: number|null, ad_count: number, has_data: boolean }}
+ * @param {string} company
+ * @returns {Promise<{ fetched_at: number|null, ad_count: number, has_data: boolean }>}
  */
-function getCacheStatus(company) {
-  const row = db
-    .prepare(
-      `SELECT ad_data, fetched_at FROM ads_cache
-       WHERE company_name = ?
-       ORDER BY fetched_at DESC
-       LIMIT 1`
-    )
-    .get(company);
+async function getCacheStatus(company) {
+  const result = await client.execute({
+    sql: `SELECT ad_data, fetched_at FROM ads_cache
+          WHERE company_name = ?
+          ORDER BY fetched_at DESC
+          LIMIT 1`,
+    args: [company],
+  });
+  const row = result.rows[0];
   if (!row) return { fetched_at: null, ad_count: 0, has_data: false };
   let ad_count = 0;
   try { ad_count = JSON.parse(row.ad_data).length; } catch { /* empty */ }
-  return { fetched_at: row.fetched_at, ad_count, has_data: true };
+  return { fetched_at: Number(row.fetched_at), ad_count, has_data: true };
 }
 
 /**
  * Return cache metadata for multiple companies.
  * @param {string[]} companies
- * @returns {{ company: string, fetched_at: number|null, ad_count: number, has_data: boolean }[]}
+ * @returns {Promise<Array>}
  */
-function getAllCacheStatuses(companies) {
-  return companies.map((c) => ({ company: c, ...getCacheStatus(c) }));
+async function getAllCacheStatuses(companies) {
+  const results = await Promise.all(
+    companies.map(async (c) => ({ company: c, ...(await getCacheStatus(c)) }))
+  );
+  return results;
 }
 
 /**
- * Return the most recently cached ads for a company regardless of age.
- * Used as a stale-cache fallback when the live API is unavailable.
- * @param {string} company - Competitor company name
- * @returns {Array|null} Parsed ad array or null if never cached
+ * Return the most recently cached ads for a company regardless of age (stale fallback).
+ * @param {string} company
+ * @returns {Promise<Array|null>}
  */
-function getCachedAdsAny(company) {
-  const row = db
-    .prepare(
-      `SELECT ad_data FROM ads_cache
-       WHERE company_name = ?
-       ORDER BY fetched_at DESC
-       LIMIT 1`
-    )
-    .get(company);
-
+async function getCachedAdsAny(company) {
+  const result = await client.execute({
+    sql: `SELECT ad_data FROM ads_cache
+          WHERE company_name = ?
+          ORDER BY fetched_at DESC
+          LIMIT 1`,
+    args: [company],
+  });
+  const row = result.rows[0];
   if (!row) return null;
   try {
     return JSON.parse(row.ad_data);
@@ -235,55 +231,61 @@ function getCachedAdsAny(company) {
 
 /**
  * Clear cached ads for a specific company, or all companies if name is '*'.
- * @param {string} company - Company name or '*' for all
+ * @param {string} company
  */
-function clearAdsCache(company) {
+async function clearAdsCache(company) {
   if (company === '*') {
-    db.prepare('DELETE FROM ads_cache').run();
+    await client.execute({ sql: 'DELETE FROM ads_cache', args: [] });
   } else {
-    db.prepare('DELETE FROM ads_cache WHERE company_name = ?').run(company);
+    await client.execute({ sql: 'DELETE FROM ads_cache WHERE company_name = ?', args: [company] });
   }
 }
 
 /**
  * Return cached competitor profile if fresher than maxAgeHours.
  */
-function getCompetitorProfile(company, maxAgeHours = 24) {
+async function getCompetitorProfile(company, maxAgeHours = 24) {
   const cutoff = Math.floor(Date.now() / 1000) - maxAgeHours * 3600;
-  const row = db
-    .prepare(
-      `SELECT summary, created_at FROM competitor_profiles
-       WHERE company_name = ? AND created_at > ?
-       ORDER BY created_at DESC LIMIT 1`
-    )
-    .get(company, cutoff);
+  const result = await client.execute({
+    sql: `SELECT summary, created_at FROM competitor_profiles
+          WHERE company_name = ? AND created_at > ?
+          ORDER BY created_at DESC LIMIT 1`,
+    args: [company, cutoff],
+  });
+  const row = result.rows[0];
   if (!row) return null;
-  return { summary: row.summary, created_at: row.created_at };
+  return { summary: row.summary, created_at: Number(row.created_at) };
 }
 
 /**
  * Save competitor profile — deletes old entry, inserts new.
  */
-function saveCompetitorProfile(company, summary) {
+async function saveCompetitorProfile(company, summary) {
   const now = Math.floor(Date.now() / 1000);
-  db.prepare('DELETE FROM competitor_profiles WHERE company_name = ?').run(company);
-  db.prepare(
-    'INSERT INTO competitor_profiles (company_name, summary, created_at) VALUES (?, ?, ?)'
-  ).run(company, summary, now);
+  await client.batch(
+    [
+      { sql: 'DELETE FROM competitor_profiles WHERE company_name = ?', args: [company] },
+      {
+        sql: 'INSERT INTO competitor_profiles (company_name, summary, created_at) VALUES (?, ?, ?)',
+        args: [company, summary, now],
+      },
+    ],
+    'write'
+  );
 }
 
 /**
  * Return cached ad scores if fresher than maxAgeHours.
  */
-function getAdScores(cacheKey, maxAgeHours = 1) {
+async function getAdScores(cacheKey, maxAgeHours = 1) {
   const cutoff = Math.floor(Date.now() / 1000) - maxAgeHours * 3600;
-  const row = db
-    .prepare(
-      `SELECT score_data FROM ad_score_cache
-       WHERE cache_key = ? AND created_at > ?
-       ORDER BY created_at DESC LIMIT 1`
-    )
-    .get(cacheKey, cutoff);
+  const result = await client.execute({
+    sql: `SELECT score_data FROM ad_score_cache
+          WHERE cache_key = ? AND created_at > ?
+          ORDER BY created_at DESC LIMIT 1`,
+    args: [cacheKey, cutoff],
+  });
+  const row = result.rows[0];
   if (!row) return null;
   try {
     return JSON.parse(row.score_data);
@@ -295,25 +297,26 @@ function getAdScores(cacheKey, maxAgeHours = 1) {
 /**
  * Save ad scores for a given cache key.
  */
-function saveAdScores(cacheKey, data) {
+async function saveAdScores(cacheKey, data) {
   const now = Math.floor(Date.now() / 1000);
-  db.prepare(
-    'INSERT INTO ad_score_cache (cache_key, score_data, created_at) VALUES (?, ?, ?)'
-  ).run(cacheKey, JSON.stringify(data), now);
+  await client.execute({
+    sql: 'INSERT INTO ad_score_cache (cache_key, score_data, created_at) VALUES (?, ?, ?)',
+    args: [cacheKey, JSON.stringify(data), now],
+  });
 }
 
 /**
  * Return cached Reddit data for a brand if fresher than maxAgeHours.
  */
-function getRedditData(brand, maxAgeHours = 2) {
+async function getRedditData(brand, maxAgeHours = 2) {
   const cutoff = Math.floor(Date.now() / 1000) - maxAgeHours * 3600;
-  const row = db
-    .prepare(
-      `SELECT reddit_data FROM reddit_cache
-       WHERE brand = ? AND created_at > ?
-       ORDER BY created_at DESC LIMIT 1`
-    )
-    .get(brand, cutoff);
+  const result = await client.execute({
+    sql: `SELECT reddit_data FROM reddit_cache
+          WHERE brand = ? AND created_at > ?
+          ORDER BY created_at DESC LIMIT 1`,
+    args: [brand, cutoff],
+  });
+  const row = result.rows[0];
   if (!row) return null;
   try {
     return JSON.parse(row.reddit_data);
@@ -325,14 +328,14 @@ function getRedditData(brand, maxAgeHours = 2) {
 /**
  * Return any cached Reddit data for a brand regardless of age (stale fallback).
  */
-function getRedditDataAny(brand) {
-  const row = db
-    .prepare(
-      `SELECT reddit_data FROM reddit_cache
-       WHERE brand = ?
-       ORDER BY created_at DESC LIMIT 1`
-    )
-    .get(brand);
+async function getRedditDataAny(brand) {
+  const result = await client.execute({
+    sql: `SELECT reddit_data FROM reddit_cache
+          WHERE brand = ?
+          ORDER BY created_at DESC LIMIT 1`,
+    args: [brand],
+  });
+  const row = result.rows[0];
   if (!row) return null;
   try {
     return JSON.parse(row.reddit_data);
@@ -344,15 +347,22 @@ function getRedditDataAny(brand) {
 /**
  * Save Reddit data for a brand — deletes old entry, inserts new.
  */
-function saveRedditData(brand, data) {
+async function saveRedditData(brand, data) {
   const now = Math.floor(Date.now() / 1000);
-  db.prepare('DELETE FROM reddit_cache WHERE brand = ?').run(brand);
-  db.prepare(
-    'INSERT INTO reddit_cache (brand, reddit_data, created_at) VALUES (?, ?, ?)'
-  ).run(brand, JSON.stringify(data), now);
+  await client.batch(
+    [
+      { sql: 'DELETE FROM reddit_cache WHERE brand = ?', args: [brand] },
+      {
+        sql: 'INSERT INTO reddit_cache (brand, reddit_data, created_at) VALUES (?, ?, ?)',
+        args: [brand, JSON.stringify(data), now],
+      },
+    ],
+    'write'
+  );
 }
 
 module.exports = {
+  initSchema,
   getCachedAds, getCachedAdsAny, getCacheStatus, getAllCacheStatuses,
   saveAds, saveAiBrief, getLatestBrief, getBriefByBrand, clearAdsCache,
   getCompetitorProfile, saveCompetitorProfile,

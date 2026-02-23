@@ -26,6 +26,7 @@ const path = require('path');
 const axios = require('axios');
 const { GoogleGenerativeAI } = require('@google/generative-ai');
 const {
+  initSchema,
   getCachedAds,
   getCachedAdsAny,
   getCacheStatus,
@@ -1249,7 +1250,7 @@ const _pendingFetches = new Map(); // companyName → Promise<ads[]|null>
  */
 async function fetchCompanyAds(companyName) {
   // 1. Fresh 24h cache → return immediately, zero API usage
-  const cached = getCachedAds(companyName, 24);
+  const cached = await getCachedAds(companyName, 24);
   if (cached) return cached;
 
   // 2. Already in-flight → reuse same promise
@@ -1272,7 +1273,7 @@ async function fetchCompanyAds(companyName) {
       let filtered = filterRelevantAds(ads, brandLabel);
       // Translate non-English ad copy to English
       filtered = await translateAdsToEnglish(filtered, companyName);
-      if (filtered.length > 0) saveAds(companyName, filtered);
+      if (filtered.length > 0) await saveAds(companyName, filtered);
       return filtered;
     })
     .catch((err) => {
@@ -1457,12 +1458,12 @@ app.get('/api/ads/all', async (req, res) => {
 });
 
 // ─── Helper: build cache-status map for all competitors ──────────────────────
-function buildCacheStatusMap() {
+async function buildCacheStatusMap() {
   const now = Math.floor(Date.now() / 1000);
   const CACHE_HOURS = 24;
   const statuses = {};
   for (const c of ALL_COMPETITORS) {
-    const s = getCacheStatus(c.companyName);
+    const s = await getCacheStatus(c.companyName);
     statuses[c.companyName] = {
       ...s,
       age_hours: s.fetched_at ? (now - s.fetched_at) / 3600 : null,
@@ -1473,21 +1474,21 @@ function buildCacheStatusMap() {
 }
 
 // GET /api/cache-status — returns cache metadata for all 27 competitors (no API calls)
-app.get('/api/cache-status', (req, res) => {
-  res.json({ statuses: buildCacheStatusMap() });
+app.get('/api/cache-status', async (req, res) => {
+  res.json({ statuses: await buildCacheStatusMap() });
 });
 
 // GET /api/ads/cached — returns only SQLite-cached ad data, never calls ScrapeCreators
-app.get('/api/ads/cached', (req, res) => {
+app.get('/api/ads/cached', async (req, res) => {
   const allAds = [];
   for (const c of ALL_COMPETITORS) {
-    const ads = getCachedAdsAny(c.companyName);
+    const ads = await getCachedAdsAny(c.companyName);
     if (ads) allAds.push(...ads);
   }
   res.json({
     ads: allAds,
     total: allAds.length,
-    cacheStatuses: buildCacheStatusMap(),
+    cacheStatuses: await buildCacheStatusMap(),
     usingMockData: false,
   });
 });
@@ -1504,7 +1505,7 @@ app.post('/api/ads/fetch', async (req, res) => {
   const toFetch = [];
   const skipped = [];
   for (const company of companiesScope) {
-    if (getCachedAds(company, CACHE_HOURS)) {
+    if (await getCachedAds(company, CACHE_HOURS)) {
       skipped.push(company);
     } else {
       toFetch.push(company);
@@ -1532,7 +1533,7 @@ app.post('/api/ads/fetch', async (req, res) => {
   // Return all cached ads (full set — not just the scope)
   const allAds = [];
   for (const c of ALL_COMPETITORS) {
-    const ads = getCachedAdsAny(c.companyName);
+    const ads = await getCachedAdsAny(c.companyName);
     if (ads) allAds.push(...ads);
   }
 
@@ -1542,7 +1543,7 @@ app.post('/api/ads/fetch', async (req, res) => {
     fetched,
     skipped,
     errors,
-    cacheStatuses: buildCacheStatusMap(),
+    cacheStatuses: await buildCacheStatusMap(),
     usingMockData: false,
   });
 });
@@ -1553,14 +1554,14 @@ app.post('/api/ads/fetch', async (req, res) => {
 app.post('/api/ads/batch', async (req, res) => {
   const { companies } = req.body || {};
   if (!Array.isArray(companies) || companies.length === 0) {
-    return res.json({ ads: [], total: 0, cachedCount: 0, fetchedCount: 0, errors: [], cacheStatuses: buildCacheStatusMap() });
+    return res.json({ ads: [], total: 0, cachedCount: 0, fetchedCount: 0, errors: [], cacheStatuses: await buildCacheStatusMap() });
   }
 
   const skipped = [];   // already fresh in cache
   const toFetch = [];   // need API call
 
   for (const company of companies) {
-    if (getCachedAds(company, 24)) {
+    if (await getCachedAds(company, 24)) {
       skipped.push(company);
     } else {
       toFetch.push(company);
@@ -1588,7 +1589,7 @@ app.post('/api/ads/batch', async (req, res) => {
   // Respond with all currently-cached ads across all competitors
   const allAds = [];
   for (const c of ALL_COMPETITORS) {
-    const ads = getCachedAdsAny(c.companyName);
+    const ads = await getCachedAdsAny(c.companyName);
     if (ads) allAds.push(...ads);
   }
 
@@ -1600,7 +1601,7 @@ app.post('/api/ads/batch', async (req, res) => {
     fetched,
     skipped,
     errors,
-    cacheStatuses: buildCacheStatusMap(),
+    cacheStatuses: await buildCacheStatusMap(),
     usingMockData: false,
   });
 });
@@ -1613,7 +1614,7 @@ app.get('/api/ads/:companyName', async (req, res) => {
     return res.json({ ads, usingMockData: false });
   }
   // Stale fallback
-  const stale = getCachedAdsAny(companyName);
+  const stale = await getCachedAdsAny(companyName);
   if (stale && stale.length > 0) {
     return res.json({ ads: stale, usingMockData: false });
   }
@@ -1632,7 +1633,7 @@ app.post('/api/analyze', async (req, res) => {
   try {
     // Only check cache when not analysing a custom selection
     if (!isSelectionBased) {
-      const existing = getBriefByBrand(brand, 1);
+      const existing = await getBriefByBrand(brand, 1);
       if (existing) {
         return res.json({
           brief: existing.brief,
@@ -1656,7 +1657,7 @@ app.post('/api/analyze', async (req, res) => {
       // Gather ads for those companies (from cache or SAMPLE_ADS)
       adsToAnalyze = [];
       for (const company of brandCompanies) {
-        const cached = getCachedAds(company, 24);
+        const cached = await getCachedAds(company, 24);
         if (cached) adsToAnalyze = adsToAnalyze.concat(cached);
       }
       if (adsToAnalyze.length === 0) {
@@ -1671,7 +1672,7 @@ app.post('/api/analyze', async (req, res) => {
 
     // Save — use different cache key for selections so they don't overwrite brand cache
     const cacheKey = isSelectionBased ? `selection:${brand}` : brand;
-    saveAiBrief(brief, adsToAnalyze.length, cacheKey);
+    await saveAiBrief(brief, adsToAnalyze.length, cacheKey);
 
     res.json({
       brief,
@@ -1728,7 +1729,7 @@ app.post('/api/analyze', async (req, res) => {
 
 // GET /api/brief
 app.get('/api/brief', async (req, res) => {
-  const existing = getLatestBrief();
+  const existing = await getLatestBrief();
   const SEVEN_DAYS = 7 * 24 * 3600;
   const ONE_HOUR = 3600;
 
@@ -1751,14 +1752,14 @@ app.get('/api/brief', async (req, res) => {
   try {
     let allAds = [];
     for (const company of ALL_COMPETITORS.map((c) => c.companyName)) {
-      const cached = getCachedAds(company, 24);
+      const cached = await getCachedAds(company, 24);
       if (cached) allAds = allAds.concat(cached);
     }
     if (allAds.length === 0) allAds = SAMPLE_ADS;
 
     const brief = await runGeminiAnalysis(allAds);
     const brandsCovered = [...new Set(allAds.map((a) => a.brandLabel).filter(Boolean))].join(', ');
-    saveAiBrief(brief, allAds.length, brandsCovered);
+    await saveAiBrief(brief, allAds.length, brandsCovered);
 
     res.json({
       brief,
@@ -1783,13 +1784,13 @@ app.get('/api/brief', async (req, res) => {
 });
 
 // POST /api/refresh
-app.post('/api/refresh', (req, res) => {
+app.post('/api/refresh', async (req, res) => {
   const { company } = req.body;
   if (company) {
-    clearAdsCache(company);
+    await clearAdsCache(company);
     res.json({ success: true, message: `Cache cleared for ${company}` });
   } else {
-    clearAdsCache('*');
+    await clearAdsCache('*');
     res.json({ success: true, message: 'All cache cleared' });
   }
 });
@@ -1993,10 +1994,10 @@ const RELEVANCE_KEYWORDS = {
 app.get('/api/competitor-profile/:companyName', async (req, res) => {
   const { companyName } = req.params;
   try {
-    const cached = getCompetitorProfile(companyName, 24);
+    const cached = await getCompetitorProfile(companyName, 24);
     if (cached) return res.json({ summary: cached.summary, cached: true });
 
-    let ads = getCachedAds(companyName, 24) || getCachedAdsAny(companyName) || SAMPLE_ADS.filter((a) => a.companyName === companyName);
+    let ads = await getCachedAds(companyName, 24) || await getCachedAdsAny(companyName) || SAMPLE_ADS.filter((a) => a.companyName === companyName);
     if (!ads || ads.length === 0) return res.json({ summary: 'No ad data available yet.', cached: false });
     if (!genAI) return res.json({ summary: 'Analysis pending...', cached: false });
 
@@ -2008,7 +2009,7 @@ app.get('/api/competitor-profile/:companyName', async (req, res) => {
 
     const result = await model.generateContent(prompt);
     const summary = result.response.text().trim();
-    saveCompetitorProfile(companyName, summary);
+    await saveCompetitorProfile(companyName, summary);
     return res.json({ summary, cached: false });
   } catch (err) {
     console.error(`[/api/competitor-profile/${companyName}]`, err.message);
@@ -2029,7 +2030,7 @@ app.post('/api/score-ads', async (req, res) => {
   try {
     // Check cache (1hr TTL) unless regenerate is requested
     if (!bypassCache) {
-      const cached = getAdScores(cacheKey, 1);
+      const cached = await getAdScores(cacheKey, 1);
       if (cached) {
         return res.json({ ...cached, cached: true });
       }
@@ -2111,7 +2112,7 @@ ${adsJson}`;
       parsed = JSON.parse(stripMarkdownFences(result2.response.text()));
     }
 
-    saveAdScores(cacheKey, parsed);
+    await saveAdScores(cacheKey, parsed);
     return res.json({ ...parsed, cached: false });
   } catch (err) {
     console.error('[/api/score-ads]', err.message);
@@ -2154,14 +2155,14 @@ app.get('/api/reddit/:brand', async (req, res) => {
 
   try {
     // 1. Fresh 2hr cache → return instantly
-    const cached = getRedditData(decodedBrand, 2);
+    const cached = await getRedditData(decodedBrand, 2);
     if (cached) {
       return res.json({ ...cached, cached: true });
     }
 
     const sources = REDDIT_SOURCES[decodedBrand];
     if (!sources) {
-      const stale = getRedditDataAny(decodedBrand);
+      const stale = await getRedditDataAny(decodedBrand);
       if (stale) return res.json({ ...stale, cached: true });
       return res.json({ ...(MOCK_REDDIT_DATA[decodedBrand] || MOCK_REDDIT_DATA['Man Matters']), cached: false });
     }
@@ -2196,7 +2197,7 @@ app.get('/api/reddit/:brand', async (req, res) => {
 
     // 3. Reddit blocked / empty → try stale cache first (real data, no banner)
     if (filteredPosts.length === 0) {
-      const stale = getRedditDataAny(decodedBrand);
+      const stale = await getRedditDataAny(decodedBrand);
       if (stale) {
         console.log(`[Reddit] Serving stale cache for ${decodedBrand} (Reddit returned no posts)`);
         return res.json({ ...stale, cached: true });
@@ -2206,7 +2207,7 @@ app.get('/api/reddit/:brand', async (req, res) => {
     // 4. No posts + no cache → generate insights from competitor ads via Gemini
     if (filteredPosts.length === 0 || !genAI) {
       if (!genAI) {
-        const stale = getRedditDataAny(decodedBrand);
+        const stale = await getRedditDataAny(decodedBrand);
         if (stale) return res.json({ ...stale, cached: true });
         return res.json({ ...MOCK_REDDIT_DATA[decodedBrand], cached: false, postCount: 0 });
       }
@@ -2215,7 +2216,7 @@ app.get('/api/reddit/:brand', async (req, res) => {
       const brandCompanies = (COMPETITORS[decodedBrand] || []).map((c) => c.companyName);
       let competitorAds = [];
       for (const company of brandCompanies) {
-        const ads = getCachedAds(company, 24) || SAMPLE_ADS.filter((a) => a.companyName === company);
+        const ads = await getCachedAds(company, 24) || SAMPLE_ADS.filter((a) => a.companyName === company);
         competitorAds.push(...ads.slice(0, 5));
       }
       const model = genAI.getGenerativeModel({ model: 'gemini-2.5-flash' });
@@ -2238,7 +2239,7 @@ Provide exactly 5 complaints, 4 gap opportunities, 4 trending topics.`;
       try {
         const result = await model.generateContent(adsOnlyPrompt);
         const insights = JSON.parse(stripMarkdownFences(result.response.text()));
-        saveRedditData(decodedBrand, insights);
+        await saveRedditData(decodedBrand, insights);
         return res.json({ ...insights, cached: false });
       } catch (aiErr) {
         console.error(`[Reddit] Gemini-only generation failed for ${decodedBrand}:`, aiErr.message);
@@ -2250,7 +2251,7 @@ Provide exactly 5 complaints, 4 gap opportunities, 4 trending topics.`;
     const brandCompanies = (COMPETITORS[decodedBrand] || []).map((c) => c.companyName);
     let competitorAds = [];
     for (const company of brandCompanies) {
-      const ads = getCachedAds(company, 24) || SAMPLE_ADS.filter((a) => a.companyName === company);
+      const ads = await getCachedAds(company, 24) || SAMPLE_ADS.filter((a) => a.companyName === company);
       competitorAds.push(...ads.slice(0, 5));
     }
 
@@ -2303,7 +2304,7 @@ Rules:
     try {
       const result = await model.generateContent(redditPrompt);
       const parsed = JSON.parse(stripMarkdownFences(result.response.text()));
-      saveRedditData(decodedBrand, parsed);
+      await saveRedditData(decodedBrand, parsed);
       return res.json({ ...parsed, cached: false, postCount: filteredPosts.length });
     } catch (parseErr) {
       console.warn('[Reddit] Parse failed, returning mock data');
@@ -2328,9 +2329,14 @@ if (process.env.NODE_ENV === 'production') {
 
 // ─── Start ────────────────────────────────────────────────────────────────────
 
-app.listen(PORT, () => {
-  console.log(`\n🚀 Ad War Room API running on http://localhost:${PORT}`);
-  console.log(`   ScrapeCreators: ${SCRAPE_API_KEY ? '✅ configured' : '⚠️  not set — using mock data'}`);
-  console.log(`   Gemini AI:      ${GEMINI_API_KEY ? '✅ configured' : '⚠️  not set — insights will use fallback'}`);
-  console.log(`   Environment:    ${process.env.NODE_ENV || 'development'}\n`);
-});
+async function start() {
+  await initSchema();
+  app.listen(PORT, () => {
+    console.log(`\n🚀 Ad War Room API running on http://localhost:${PORT}`);
+    console.log(`   ScrapeCreators: ${SCRAPE_API_KEY ? '✅ configured' : '⚠️  not set — using mock data'}`);
+    console.log(`   Gemini AI:      ${GEMINI_API_KEY ? '✅ configured' : '⚠️  not set — insights will use fallback'}`);
+    console.log(`   Database:       ${process.env.TURSO_DATABASE_URL ? '☁️  Turso (remote)' : '📁 local file'}`);
+    console.log(`   Environment:    ${process.env.NODE_ENV || 'development'}\n`);
+  });
+}
+start().catch(console.error);
