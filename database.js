@@ -181,6 +181,30 @@ function getBriefByBrand(brand, maxAgeHours = 1) {
 }
 
 /**
+ * Return the most recently cached ads for a company regardless of age.
+ * Used as a stale-cache fallback when the live API is unavailable.
+ * @param {string} company - Competitor company name
+ * @returns {Array|null} Parsed ad array or null if never cached
+ */
+function getCachedAdsAny(company) {
+  const row = db
+    .prepare(
+      `SELECT ad_data FROM ads_cache
+       WHERE company_name = ?
+       ORDER BY fetched_at DESC
+       LIMIT 1`
+    )
+    .get(company);
+
+  if (!row) return null;
+  try {
+    return JSON.parse(row.ad_data);
+  } catch {
+    return null;
+  }
+}
+
+/**
  * Clear cached ads for a specific company, or all companies if name is '*'.
  * @param {string} company - Company name or '*' for all
  */
@@ -281,7 +305,7 @@ function saveRedditData(brand, data) {
 }
 
 module.exports = {
-  getCachedAds, saveAds, saveAiBrief, getLatestBrief, getBriefByBrand, clearAdsCache,
+  getCachedAds, getCachedAdsAny, saveAds, saveAiBrief, getLatestBrief, getBriefByBrand, clearAdsCache,
   getCompetitorProfile, saveCompetitorProfile,
   getAdScores, saveAdScores,
   getRedditData, saveRedditData,

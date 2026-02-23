@@ -27,6 +27,7 @@ const axios = require('axios');
 const { GoogleGenerativeAI } = require('@google/generative-ai');
 const {
   getCachedAds,
+  getCachedAdsAny,
   saveAds,
   saveAiBrief,
   getLatestBrief,
@@ -1307,16 +1308,22 @@ app.get('/api/ads/all', async (req, res) => {
             if (ads && ads.length > 0) {
               saveAds(company, ads);
             } else {
-              // Fall back to SAMPLE_ADS for this company
-              ads = SAMPLE_ADS.filter((a) => a.companyName === company);
-              if (ads.length === 0) {
-                ads = SAMPLE_ADS.filter(
-                  (a) =>
-                    a.brandLabel ===
-                    (Object.entries(COMPETITORS).find(([, list]) =>
-                      list.some((c) => c.companyName === company)
-                    )?.[0] || '')
-                ).slice(0, 2);
+              // API failed — try any stale cached data first (stale-while-revalidate)
+              const stale = getCachedAdsAny(company);
+              if (stale && stale.length > 0) {
+                ads = stale;
+              } else {
+                // Last resort: fall back to SAMPLE_ADS for this company
+                ads = SAMPLE_ADS.filter((a) => a.companyName === company);
+                if (ads.length === 0) {
+                  ads = SAMPLE_ADS.filter(
+                    (a) =>
+                      a.brandLabel ===
+                      (Object.entries(COMPETITORS).find(([, list]) =>
+                        list.some((c) => c.companyName === company)
+                      )?.[0] || '')
+                  ).slice(0, 2);
+                }
               }
             }
           }
@@ -1351,7 +1358,13 @@ app.get('/api/ads/:companyName', async (req, res) => {
     return res.json({ ads, cached: false, usingMockData: false });
   }
 
-  // Fall back to SAMPLE_ADS
+  // Try stale cache before SAMPLE_ADS
+  const stale = getCachedAdsAny(companyName);
+  if (stale && stale.length > 0) {
+    return res.json({ ads: stale, cached: true, usingMockData: false });
+  }
+
+  // Last resort: SAMPLE_ADS
   const fallback = SAMPLE_ADS.filter((a) => a.companyName === companyName);
   res.json({
     ads: fallback.length ? fallback : SAMPLE_ADS.slice(0, 3),
