@@ -92,7 +92,7 @@ const COMPETITORS = {
     { name: 'mCaffeine',        companyName: 'mcaffeine' },
   ],
   'Little Joys': [
-    { name: 'BabyChakra',   companyName: 'babychakra' },
+    { name: 'Mee Mee',      companyName: 'meemeeofficial', searchQuery: 'mee mee baby' },
     { name: 'The Moms Co',  companyName: 'themomsco' },
     { name: 'Mylo',         companyName: 'mylo', searchQuery: 'mylo baby care' },
     { name: 'Himalaya Baby', companyName: 'himalayababycare' },
