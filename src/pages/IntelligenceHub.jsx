@@ -18,6 +18,8 @@ import FilterBar from '../components/FilterBar.jsx';
 import AdGrid from '../components/AdGrid.jsx';
 import Bold from '../components/Bold.jsx';
 
+const API_BASE = import.meta.env.VITE_API_URL || '';
+
 const BRAND_META = [
   { id: 'All',         label: 'All Brands',  tagline: 'All three verticals',     color: 'gray' },
   { id: 'Man Matters', label: 'Man Matters',  tagline: "Men's Health & Grooming", color: 'blue' },
@@ -149,7 +151,7 @@ export default function IntelligenceHub() {
       return;
     }
     setAdsLoading(true);
-    fetch('/api/ads/all')
+    fetch(`${API_BASE}/api/ads/all`)
       .then((r) => r.json())
       .then((data) => {
         setAllAds(data.ads || []);
@@ -180,7 +182,7 @@ export default function IntelligenceHub() {
     const controller = new AbortController();
 
     unresolved.forEach((competitor) => {
-      const url = `/api/competitor-profile/${competitor.companyName}`;
+      const url = `${API_BASE}/api/competitor-profile/${competitor.companyName}`;
       fetch(url, { signal: controller.signal })
         .then((r) => r.json())
         .then((data) => {

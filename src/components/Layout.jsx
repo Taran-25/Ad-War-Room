@@ -2,6 +2,8 @@ import { useState, useEffect, useCallback } from 'react';
 import { Outlet, useLocation, useNavigate, Link } from 'react-router-dom';
 import { useAds } from '../context/AdsContext.jsx';
 
+const API_BASE = import.meta.env.VITE_API_URL || '';
+
 const STEPS = [
   { path: '/',         label: 'Intelligence Hub', short: '1' },
   { path: '/analysis', label: 'Analysis',          short: '2' },
@@ -55,12 +57,12 @@ export default function Layout() {
   const handleRefresh = useCallback(async () => {
     setRefreshing(true);
     try {
-      await fetch('/api/refresh', {
+      await fetch(`${API_BASE}/api/refresh`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({}),
       });
-      const res = await fetch('/api/ads/all');
+      const res = await fetch(`${API_BASE}/api/ads/all`);
       const data = await res.json();
       setAllAds(data.ads || []);
       setLastUpdated(new Date());

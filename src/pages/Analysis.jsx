@@ -24,6 +24,8 @@ import AdLongevityTable from '../components/AdLongevityTable.jsx';
 import Bold from '../components/Bold.jsx';
 import { BoldText } from '../utils/boldKeywords.jsx';
 
+const API_BASE = import.meta.env.VITE_API_URL || '';
+
 const BRANDS = ['All', 'Man Matters', 'Bebodywise', 'Little Joys'];
 
 const BRAND_PILL_ACTIVE = {
@@ -84,7 +86,7 @@ export default function Analysis() {
     try {
       const adsToAnalyze = selectedAds.length > 0 ? selectedAds : allAds;
       const isSelectionBased = selectedAds.length > 0;
-      const res = await fetch('/api/analyze', {
+      const res = await fetch(`${API_BASE}/api/analyze`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ brand, ads: adsToAnalyze, isSelectionBased }),
@@ -123,7 +125,7 @@ export default function Analysis() {
     if (selectedAds.length === 0) return;
     setScoresLoading(true);
     try {
-      const res = await fetch('/api/score-ads', {
+      const res = await fetch(`${API_BASE}/api/score-ads`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ ads: selectedAds, regenerate: bypassCache }),
