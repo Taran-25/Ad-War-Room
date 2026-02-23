@@ -40,6 +40,7 @@ const {
   getAdScores,
   saveAdScores,
   getRedditData,
+  getRedditDataAny,
   saveRedditData,
 } = require('./database');
 
@@ -2152,7 +2153,7 @@ app.get('/api/reddit/:brand', async (req, res) => {
   const decodedBrand = decodeURIComponent(req.params.brand);
 
   try {
-    // Check cache (2hr TTL)
+    // 1. Fresh 2hr cache → return instantly
     const cached = getRedditData(decodedBrand, 2);
     if (cached) {
       return res.json({ ...cached, cached: true });
@@ -2160,10 +2161,12 @@ app.get('/api/reddit/:brand', async (req, res) => {
 
     const sources = REDDIT_SOURCES[decodedBrand];
     if (!sources) {
+      const stale = getRedditDataAny(decodedBrand);
+      if (stale) return res.json({ ...stale, cached: true });
       return res.json({ ...(MOCK_REDDIT_DATA[decodedBrand] || MOCK_REDDIT_DATA['Man Matters']), cached: false });
     }
 
-    // Fetch Reddit posts from multiple sources
+    // 2. Attempt Reddit post fetch
     const allPosts = [];
     for (const url of sources) {
       try {
@@ -2189,11 +2192,58 @@ app.get('/api/reddit/:brand', async (req, res) => {
       )
     );
     if (filteredPosts.length < 5) filteredPosts = allPosts;
-    // Filter out low-quality posts
     filteredPosts = filteredPosts.filter(p => (p.ups || 0) >= 2);
 
+    // 3. Reddit blocked / empty → try stale cache first (real data, no banner)
+    if (filteredPosts.length === 0) {
+      const stale = getRedditDataAny(decodedBrand);
+      if (stale) {
+        console.log(`[Reddit] Serving stale cache for ${decodedBrand} (Reddit returned no posts)`);
+        return res.json({ ...stale, cached: true });
+      }
+    }
+
+    // 4. No posts + no cache → generate insights from competitor ads via Gemini
     if (filteredPosts.length === 0 || !genAI) {
-      return res.json({ ...MOCK_REDDIT_DATA[decodedBrand], cached: false, postCount: 0 });
+      if (!genAI) {
+        const stale = getRedditDataAny(decodedBrand);
+        if (stale) return res.json({ ...stale, cached: true });
+        return res.json({ ...MOCK_REDDIT_DATA[decodedBrand], cached: false, postCount: 0 });
+      }
+      // Generate AI insights from competitor ads only (no Reddit data)
+      console.log(`[Reddit] No posts available for ${decodedBrand} — generating from ads only`);
+      const brandCompanies = (COMPETITORS[decodedBrand] || []).map((c) => c.companyName);
+      let competitorAds = [];
+      for (const company of brandCompanies) {
+        const ads = getCachedAds(company, 24) || SAMPLE_ADS.filter((a) => a.companyName === company);
+        competitorAds.push(...ads.slice(0, 5));
+      }
+      const model = genAI.getGenerativeModel({ model: 'gemini-2.5-flash' });
+      const adsOnlyPrompt = `You are a consumer insights analyst for ${decodedBrand} in the Indian wellness market.
+Based ONLY on your knowledge of Indian consumer behaviour and these competitor ads, generate realistic consumer complaints and content gap opportunities.
+
+Competitor ads:
+${JSON.stringify(competitorAds.slice(0, 15).map((a) => ({ title: a.title, body: a.body?.slice(0, 150), cta: a.callToAction })), null, 2)}
+
+Return ONLY valid JSON (no markdown) with this exact structure:
+{
+  "complaints": [{ "title": "string", "detail": "string", "frequency": "high|medium|low", "subreddit": "r/inferred" }],
+  "gapOpportunities": [{ "title": "string", "unmetNeed": "string", "urgency": "high|medium|low", "suggestedAngle": "string" }],
+  "trendingTopics": [{ "topic": "string", "direction": "rising|stable" }],
+  "sentimentSummary": "string",
+  "subredditSources": ["r/IndianSkincareAddicts"],
+  "postCount": 0
+}
+Provide exactly 5 complaints, 4 gap opportunities, 4 trending topics.`;
+      try {
+        const result = await model.generateContent(adsOnlyPrompt);
+        const insights = JSON.parse(stripMarkdownFences(result.response.text()));
+        saveRedditData(decodedBrand, insights);
+        return res.json({ ...insights, cached: false });
+      } catch (aiErr) {
+        console.error(`[Reddit] Gemini-only generation failed for ${decodedBrand}:`, aiErr.message);
+        return res.json({ ...MOCK_REDDIT_DATA[decodedBrand], cached: false, postCount: 0 });
+      }
     }
 
     // Get competitor ads (up to 5 per company)

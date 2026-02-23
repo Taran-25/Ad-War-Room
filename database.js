@@ -323,6 +323,25 @@ function getRedditData(brand, maxAgeHours = 2) {
 }
 
 /**
+ * Return any cached Reddit data for a brand regardless of age (stale fallback).
+ */
+function getRedditDataAny(brand) {
+  const row = db
+    .prepare(
+      `SELECT reddit_data FROM reddit_cache
+       WHERE brand = ?
+       ORDER BY created_at DESC LIMIT 1`
+    )
+    .get(brand);
+  if (!row) return null;
+  try {
+    return JSON.parse(row.reddit_data);
+  } catch {
+    return null;
+  }
+}
+
+/**
  * Save Reddit data for a brand — deletes old entry, inserts new.
  */
 function saveRedditData(brand, data) {
@@ -338,5 +357,5 @@ module.exports = {
   saveAds, saveAiBrief, getLatestBrief, getBriefByBrand, clearAdsCache,
   getCompetitorProfile, saveCompetitorProfile,
   getAdScores, saveAdScores,
-  getRedditData, saveRedditData,
+  getRedditData, getRedditDataAny, saveRedditData,
 };
