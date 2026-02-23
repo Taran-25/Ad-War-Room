@@ -94,7 +94,7 @@ const COMPETITORS = {
   'Little Joys': [
     { name: 'BabyChakra',   companyName: 'babychakra' },
     { name: 'The Moms Co',  companyName: 'themomsco' },
-    { name: 'Mylo',         companyName: 'mylo' },
+    { name: 'Mylo',         companyName: 'mylo', searchQuery: 'mylo baby care' },
     { name: 'Himalaya Baby', companyName: 'himalayababycare' },
     { name: 'Sebamed Baby', companyName: 'sebamedbaby' },
     { name: 'Chicco India', companyName: 'chiccoindia' },
@@ -104,6 +104,87 @@ const COMPETITORS = {
 
 // Flat list for quick lookup
 const ALL_COMPETITORS = Object.values(COMPETITORS).flat();
+
+// ─── Category keyword filtering ───────────────────────────────────────────────
+// Used to strip off-topic ads returned by broad search queries (e.g. 'mylo').
+const CATEGORY_KEYWORDS = {
+  'Man Matters':  ['hair', 'beard', 'shave', 'grooming', 'men', 'male', 'testosterone', 'protein', 'fitness', 'stamina', 'face wash', 'skincare', 'supplement', 'health'],
+  'Bebodywise':   ['women', 'period', 'pcos', 'pregnancy', 'hormonal', 'skin', 'beauty', 'nutrition', 'supplement', 'wellness', 'female'],
+  'Little Joys':  ['baby', 'infant', 'diaper', 'nappy', 'newborn', 'toddler', 'wipes', 'mommy', 'parenting', 'child', 'kids', 'parent', 'mom', 'rash', 'feeding'],
+};
+
+/** Look up a competitor's full config object by companyName. */
+function getCompetitorConfig(companyName) {
+  for (const list of Object.values(COMPETITORS)) {
+    const found = list.find((c) => c.companyName.toLowerCase() === companyName.toLowerCase());
+    if (found) return found;
+  }
+  return null;
+}
+
+/**
+ * Filter ads to only those relevant to the Mosaic brand's category.
+ * Falls back to all ads if fewer than 3 would survive.
+ */
+function filterRelevantAds(ads, brandLabel) {
+  const keywords = CATEGORY_KEYWORDS[brandLabel];
+  if (!keywords || keywords.length === 0) return ads;
+  const relevant = ads.filter((ad) => {
+    const text = `${ad.title || ''} ${ad.body || ''}`.toLowerCase();
+    return keywords.some((kw) => text.includes(kw));
+  });
+  return relevant.length >= Math.min(3, ads.length) ? relevant : ads;
+}
+
+// ─── Non-English detection + translation ─────────────────────────────────────
+
+/**
+ * Returns true if text is predominantly ASCII (Latin script).
+ * Non-ASCII ratio > 40% → treat as non-English.
+ */
+function isEnglishText(text) {
+  if (!text || text.length < 10) return true;
+  const asciiCount = (text.match(/[\x00-\x7F]/g) || []).length;
+  return asciiCount / text.length > 0.6;
+}
+
+/**
+ * Batch-translate non-English ad bodies using Gemini (1 API call per company).
+ * Sets `translated: true` on each mutated ad.
+ * Returns original ads untouched if Gemini is unavailable or translation fails.
+ */
+async function translateAdsToEnglish(ads, companyName) {
+  if (!genAI) return ads;
+  const nonEnglishIdxs = ads.reduce((acc, ad, i) => {
+    if (!isEnglishText(ad.body || '')) acc.push(i);
+    return acc;
+  }, []);
+  if (nonEnglishIdxs.length === 0) return ads;
+
+  try {
+    const model = genAI.getGenerativeModel({ model: 'gemini-1.5-flash' });
+    const snippets = nonEnglishIdxs
+      .map((i, n) => `[${n}] ${ads[i].body || ''}`)
+      .join('\n---\n');
+    const prompt = `Translate the following ad copy snippets to English. Return ONLY a JSON array of strings in the same order, no markdown, no extra text.\n\n${snippets}`;
+    const result = await model.generateContent(prompt);
+    const raw = result.response.text().trim().replace(/^```json?\n?|\n?```$/g, '');
+    const translations = JSON.parse(raw);
+
+    const adsCopy = ads.map((ad) => ({ ...ad }));
+    nonEnglishIdxs.forEach((adIdx, n) => {
+      if (translations[n]) {
+        adsCopy[adIdx].body = translations[n];
+        adsCopy[adIdx].translated = true;
+      }
+    });
+    console.log(`[translateAdsToEnglish] ${companyName}: translated ${nonEnglishIdxs.length} ads`);
+    return adsCopy;
+  } catch (err) {
+    console.error(`[translateAdsToEnglish] ${companyName}:`, err.message);
+    return ads;
+  }
+}
 
 // ─── Sample / Fallback Data ───────────────────────────────────────────────────
 
@@ -1044,7 +1125,7 @@ const SAMPLE_ADS = [
  * Correct endpoint: GET /v1/facebook/adLibrary/search/ads (camelCase, /search/)
  * Returns null on any error so callers can fall back to SAMPLE_ADS.
  */
-async function fetchAdsFromAPI(companyName) {
+async function fetchAdsFromAPI(companyName, searchQuery) {
   if (!SCRAPE_API_KEY) return null;
 
   try {
@@ -1052,7 +1133,7 @@ async function fetchAdsFromAPI(companyName) {
       'https://api.scrapecreators.com/v1/facebook/adLibrary/search/ads',
       {
         params: {
-          query: companyName,
+          query: searchQuery || companyName,
           status: 'ACTIVE',
           country: 'ALL',
           ad_type: 'all',
@@ -1175,11 +1256,23 @@ async function fetchCompanyAds(companyName) {
     return _pendingFetches.get(companyName);
   }
 
-  // 3. New fetch
-  const p = fetchAdsFromAPI(companyName)
-    .then((ads) => {
-      if (ads && ads.length > 0) saveAds(companyName, ads);
-      return ads || null;
+  // 3. Resolve competitor config for custom searchQuery + brandLabel
+  const config = getCompetitorConfig(companyName);
+  const searchQuery = config?.searchQuery || null;
+  const brandLabel = Object.entries(COMPETITORS).find(([, list]) =>
+    list.some((c) => c.companyName.toLowerCase() === companyName.toLowerCase())
+  )?.[0] || null;
+
+  // 4. New fetch — with category filtering + translation pipeline
+  const p = fetchAdsFromAPI(companyName, searchQuery)
+    .then(async (ads) => {
+      if (!ads || ads.length === 0) return null;
+      // Strip off-topic ads (e.g. non-baby Mylo results)
+      let filtered = filterRelevantAds(ads, brandLabel);
+      // Translate non-English ad copy to English
+      filtered = await translateAdsToEnglish(filtered, companyName);
+      if (filtered.length > 0) saveAds(companyName, filtered);
+      return filtered;
     })
     .catch((err) => {
       console.error(`[fetchCompanyAds] ${companyName}:`, err.message);

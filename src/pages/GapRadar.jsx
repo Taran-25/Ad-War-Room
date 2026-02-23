@@ -16,6 +16,8 @@ import { useAds } from '../context/AdsContext.jsx';
 import Bold from '../components/Bold.jsx';
 import { BoldText } from '../utils/boldKeywords.jsx';
 
+const API_BASE = import.meta.env.VITE_API_URL || '';
+
 const BRANDS = ['Man Matters', 'Bebodywise', 'Little Joys'];
 
 const BRAND_PILL = {
@@ -64,12 +66,13 @@ export default function GapRadar() {
     setLoading(true);
     setRedditData(null);
     try {
-      const res = await fetch(`/api/reddit/${encodeURIComponent(brand)}`);
+      const res = await fetch(`${API_BASE}/api/reddit/${encodeURIComponent(brand)}`);
       const data = await res.json();
       setRedditData(data);
       setLastFetched(new Date());
     } catch (err) {
       console.error('Reddit fetch failed:', err);
+      setRedditData({ fallback: true });
     } finally {
       setLoading(false);
     }
