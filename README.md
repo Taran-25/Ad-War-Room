@@ -142,11 +142,3 @@ ad-war-room/
 | **Railway** | Supports Node.js + SQLite natively, free tier available, `railway.json` auto-detected |
 
 ---
-
-## Brands & Competitors Tracked
-
-| Mosaic Brand | Competitors Monitored |
-|---|---|
-| Man Matters | Beardo, Ustraa, Bombay Shaving Company, The Man Company, Vedix |
-| Bebodywise | Nua Woman, Pee Safe, Sirona, Carmesi |
-| Little Joys | Mamaearth, The Moms Co, Mee Mee |
