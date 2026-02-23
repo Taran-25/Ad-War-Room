@@ -40,7 +40,7 @@ function LoadingSkeleton() {
   );
 }
 
-export default function AIInsightsPanel({ brief, isLoading, onAnalyze, threatLevel, threatReason, selectedBrand }) {
+export default function AIInsightsPanel({ brief, isLoading, onAnalyze, threatLevel, threatReason, selectedBrand, sampled, adCount }) {
   const insights = brief?.topInsights || [];
   const weeklyBrief = brief?.weeklyBrief || '';
   const allMessagingShifts = brief?.messagingShifts || [];
@@ -76,6 +76,11 @@ export default function AIInsightsPanel({ brief, isLoading, onAnalyze, threatLev
         </div>
       </div>
 
+      {sampled && adCount > 50 && (
+        <div className="px-6 py-2 bg-blue-50 border-b border-blue-100 text-xs text-blue-600">
+          Analysis based on a representative sample of 50 ads (top performers + newest + random sample) from your {adCount} selected ads.
+        </div>
+      )}
       <div className="flex flex-col lg:flex-row divide-y lg:divide-y-0 lg:divide-x divide-gray-100">
         {/* Left: Top Insights (60%) */}
         <div className="lg:w-3/5 p-6">

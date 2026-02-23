@@ -51,7 +51,8 @@ app.use(cors({
   ],
   credentials: true,
 }));
-app.use(express.json({ limit: '10mb' }));
+app.use(express.json({ limit: '50mb' }));
+app.use(express.urlencoded({ limit: '50mb', extended: true }));
 
 // ─── Constants ────────────────────────────────────────────────────────────────
 
@@ -1165,6 +1166,31 @@ function stripMarkdownFences(text) {
 }
 
 /**
+ * Sample up to 50 representative ads from a large set for Gemini analysis.
+ * Returns the original array unchanged if it has 50 or fewer ads.
+ * Strategy: top 20 by daysRunning + top 20 by most recent startDate + 10 random from rest.
+ */
+function sampleAdsForGemini(ads) {
+  if (ads.length <= 50) return ads;
+
+  const seen = new Set();
+  const pick = (arr) => {
+    const out = [];
+    for (const a of arr) {
+      if (!seen.has(a.id)) { seen.add(a.id); out.push(a); }
+    }
+    return out;
+  };
+
+  const byDays = pick([...ads].sort((a, b) => (b.daysRunning || 0) - (a.daysRunning || 0)).slice(0, 20));
+  const byRecent = pick([...ads].sort((a, b) => (b.startDate || '').localeCompare(a.startDate || '')).slice(0, 20));
+  const rest = ads.filter((a) => !seen.has(a.id));
+  const random = pick(rest.sort(() => Math.random() - 0.5).slice(0, 10));
+
+  return [...byDays, ...byRecent, ...random];
+}
+
+/**
  * Call Gemini 2.5 Flash with a full analysis prompt.
  * Falls back to a simplified prompt if the first parse attempt fails.
  * @param {Array}  ads   - Array of ad objects to analyse
@@ -1176,7 +1202,7 @@ async function runGeminiAnalysis(ads, brand = 'All') {
 
   const model = genAI.getGenerativeModel({ model: 'gemini-2.5-flash' });
 
-  const adsJson = JSON.stringify(ads.slice(0, 50), null, 2); // cap to avoid token limits
+  const adsJson = JSON.stringify(sampleAdsForGemini(ads), null, 2);
 
   // Brand-specific focus instruction injected when a single brand is selected
   const brandFocusInstruction = brand !== 'All'
@@ -1391,6 +1417,7 @@ app.post('/api/analyze', async (req, res) => {
       created_at: Math.floor(Date.now() / 1000),
       ad_count: adsToAnalyze.length,
       brands_covered: cacheKey,
+      sampled: adsToAnalyze.length > 50,
     });
   } catch (err) {
     console.error('[/api/analyze]', err.message);

@@ -72,6 +72,7 @@ export default function Analysis() {
   }, []);
 
   const [briefs, setBriefs] = useState({});
+  const [briefMeta, setBriefMeta] = useState({}); // { [brand]: { sampled, ad_count } }
   const [briefLoading, setBriefLoading] = useState(false);
   const fetchedBrands = useRef(new Set());
 
@@ -98,6 +99,7 @@ export default function Analysis() {
       const data = await res.json();
       if (data.brief) {
         setBriefs((prev) => ({ ...prev, [brand]: data.brief }));
+        setBriefMeta((prev) => ({ ...prev, [brand]: { sampled: data.sampled, ad_count: data.ad_count } }));
       }
     } catch (err) {
       console.error(`Brief fetch failed for ${brand}:`, err);
@@ -164,6 +166,7 @@ export default function Analysis() {
   [scores]);
 
   const currentBrief = briefs[selectedBrand || 'All'] || null;
+  const currentBriefMeta = briefMeta[selectedBrand || 'All'] || null;
 
   // Unique competitors in selected ads
   const selectedCompetitors = useMemo(() => {
@@ -268,6 +271,8 @@ export default function Analysis() {
         threatLevel={currentBrief?.threatLevel}
         threatReason={currentBrief?.threatReason}
         selectedBrand={selectedBrand || 'All'}
+        sampled={currentBriefMeta?.sampled}
+        adCount={currentBriefMeta?.ad_count}
       />
 
       {/* ── Section 5: Creative Trends ── */}
