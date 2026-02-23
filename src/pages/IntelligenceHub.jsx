@@ -169,6 +169,13 @@ export default function IntelligenceHub() {
 
   // ── Load CACHED ads on mount — no ScrapeCreators API call ─────────────────
   useEffect(() => {
+    // Always refresh cache metadata — even when ads are already in context
+    // (e.g. navigating back from Analysis page keeps allAds but loses cacheStatus)
+    fetch(`${API_BASE}/api/cache-status`)
+      .then((r) => r.json())
+      .then((data) => { if (data.statuses) setCacheStatus(data.statuses); })
+      .catch(() => {});
+
     if (allAds.length > 0) {
       setAdsLoading(false);
       return;
