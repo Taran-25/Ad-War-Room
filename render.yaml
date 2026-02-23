@@ -1,0 +1,15 @@
+services:
+  - type: web
+    name: ad-war-room
+    runtime: node
+    buildCommand: npm install && npm run build
+    startCommand: node server.js
+    envVars:
+      - key: NODE_ENV
+        value: production
+      - key: PORT
+        value: 3001
+      - key: GEMINI_API_KEY
+        sync: false
+      - key: SCRAPE_CREATORS_API_KEY
+        sync: false
