@@ -133,7 +133,6 @@ export default function IntelligenceHub() {
   const [adsLoading, setAdsLoading] = useState(allAds.length === 0);
   const [competitorProfiles, setCompetitorProfiles] = useState({});
   const [profilesLoading, setProfilesLoading] = useState(false);
-  const [profilesProgress, setProfilesProgress] = useState(null); // null | { loaded, total }
 
   const [filterState, setFilterState] = useState({
     brand: selectedBrand || 'All',
@@ -177,32 +176,20 @@ export default function IntelligenceHub() {
     if (unresolved.length === 0) { setProfilesLoading(false); return; }
 
     setProfilesLoading(true);
-    setProfilesProgress({ loaded: 0, total: unresolved.length });
-    let completedCount = 0;
-    const controller = new AbortController();
-
-    unresolved.forEach((competitor) => {
-      const url = `${API_BASE}/api/competitor-profile/${competitor.companyName}`;
-      fetch(url, { signal: controller.signal })
-        .then((r) => r.json())
-        .then((data) => {
-          setCompetitorProfiles((prev) => ({ ...prev, [competitor.companyName]: data.summary }));
-        })
-        .catch((err) => {
-          if (err.name !== 'AbortError') console.warn('[competitor-profile]', err.message);
-        })
-        .finally(() => {
-          if (controller.signal.aborted) return;
-          completedCount++;
-          setProfilesProgress({ loaded: completedCount, total: unresolved.length });
-          if (completedCount === unresolved.length) {
-            setProfilesLoading(false);
-            setProfilesProgress(null);
-          }
-        });
-    });
-
-    return () => controller.abort();
+    Promise.allSettled(
+      unresolved.map((c) =>
+        fetch(`${API_BASE}/api/competitor-profile/${c.companyName}`)
+          .then((r) => r.json())
+          .then((data) => ({ companyName: c.companyName, summary: data.summary }))
+      )
+    ).then((results) => {
+      const settled = results.filter((r) => r.status === 'fulfilled').map((r) => r.value);
+      setCompetitorProfiles((prev) => {
+        const next = { ...prev };
+        settled.forEach(({ companyName, summary }) => { next[companyName] = summary; });
+        return next;
+      });
+    }).finally(() => setProfilesLoading(false));
   }, [filterState.brand]);
 
   // Handle brand card click — syncs local filterState + context
@@ -344,17 +331,10 @@ export default function IntelligenceHub() {
 
       {/* ── Section 2: Competitor Profile Cards ── */}
       <section>
-        <div className="flex items-center justify-between mb-3 flex-wrap gap-2">
-          <h2 className="text-sm font-semibold text-gray-500 uppercase tracking-wide">
-            Competitor Profiles
-            <span className="ml-2 text-[10px] font-normal normal-case text-gray-400">AI-generated · 48hr cache</span>
-          </h2>
-          {profilesProgress && (
-            <span className="text-xs text-blue-600 font-medium animate-pulse">
-              Loading profiles… ({profilesProgress.loaded}/{profilesProgress.total} complete)
-            </span>
-          )}
-        </div>
+        <h2 className="text-sm font-semibold text-gray-500 uppercase tracking-wide mb-3">
+          Competitor Profiles
+          <span className="ml-2 text-[10px] font-normal normal-case text-gray-400">AI-generated · 24hr cache</span>
+        </h2>
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3">
           {visibleCompetitors.map((competitor) => {
             const stats = competitorStats[competitor.companyName] || { total: 0, video: 0, image: 0, carousel: 0 };

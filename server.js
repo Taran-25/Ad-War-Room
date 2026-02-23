@@ -1153,62 +1153,6 @@ async function fetchAdsFromAPI(companyName) {
 
 const genAI = GEMINI_API_KEY ? new GoogleGenerativeAI(GEMINI_API_KEY) : null;
 
-// ─── Gemini Profile Queue (rate-limit: 5 req/min free tier) ──────────────────
-const PROFILE_QUEUE_DELAY_MS = 15_000;   // 15s between Gemini calls
-const _profileQueue = [];                // { companyName, resolve, reject }[]
-const _pendingProfiles = new Map();      // companyName → Promise (dedup in-flight)
-let _profileQueueTimer = null;
-
-function _scheduleProfileQueue() {
-  if (_profileQueueTimer !== null || _profileQueue.length === 0) return;
-  _profileQueueTimer = setTimeout(_processNextProfile, 0);
-}
-
-async function _processNextProfile() {
-  _profileQueueTimer = null;
-  if (_profileQueue.length === 0) return;
-
-  const { companyName, resolve, reject } = _profileQueue.shift();
-  try {
-    const result = await _generateProfileSummary(companyName);
-    resolve(result);
-  } catch (err) {
-    reject(err);
-  }
-
-  if (_profileQueue.length > 0) {
-    _profileQueueTimer = setTimeout(_processNextProfile, PROFILE_QUEUE_DELAY_MS);
-  }
-}
-
-async function _generateProfileSummary(companyName) {
-  let ads = getCachedAds(companyName, 48) ||
-            SAMPLE_ADS.filter((a) => a.companyName === companyName);
-  if (!ads || ads.length === 0) return { summary: 'No ad data available yet.', cached: false };
-  if (!genAI)                   return { summary: 'Analysis pending...', cached: false };
-
-  const model = genAI.getGenerativeModel({ model: 'gemini-2.5-flash' });
-  const adsSample = ads.slice(0, 10)
-    .map((a) => `Title: ${a.title || ''}\nBody: ${a.body || ''}\nCTA: ${a.callToAction || ''}`)
-    .join('\n---\n');
-  const prompt = `In exactly one sentence, summarize the core messaging style and tone of ${companyName}'s ads. Be specific. Mention actual themes. Return ONLY the sentence.\n\nAds:\n${adsSample}`;
-
-  const result = await model.generateContent(prompt);
-  const summary = result.response.text().trim();
-  saveCompetitorProfile(companyName, summary);
-  return { summary, cached: false };
-}
-
-function _enqueueProfile(companyName) {
-  if (_pendingProfiles.has(companyName)) return _pendingProfiles.get(companyName);
-  const p = new Promise((resolve, reject) => {
-    _profileQueue.push({ companyName, resolve, reject });
-    _scheduleProfileQueue();
-  }).finally(() => _pendingProfiles.delete(companyName));
-  _pendingProfiles.set(companyName, p);
-  return p;
-}
-
 /**
  * Strip markdown code fences (```json ... ``` or ``` ... ```) from a string
  * and return clean JSON text ready for JSON.parse.
@@ -1760,13 +1704,23 @@ const RELEVANCE_KEYWORDS = {
 app.get('/api/competitor-profile/:companyName', async (req, res) => {
   const { companyName } = req.params;
   try {
-    // Check SQLite cache (48h TTL) — returns instantly if cached
-    const cached = getCompetitorProfile(companyName, 48);
+    const cached = getCompetitorProfile(companyName, 24);
     if (cached) return res.json({ summary: cached.summary, cached: true });
 
-    // Queue the Gemini call — waits in line, 15s between each
-    const result = await _enqueueProfile(companyName);
-    return res.json(result);
+    let ads = getCachedAds(companyName, 6) || SAMPLE_ADS.filter((a) => a.companyName === companyName);
+    if (!ads || ads.length === 0) return res.json({ summary: 'No ad data available yet.', cached: false });
+    if (!genAI) return res.json({ summary: 'Analysis pending...', cached: false });
+
+    const model = genAI.getGenerativeModel({ model: 'gemini-2.5-flash' });
+    const adsSample = ads.slice(0, 10)
+      .map((a) => `Title: ${a.title || ''}\nBody: ${a.body || ''}\nCTA: ${a.callToAction || ''}`)
+      .join('\n---\n');
+    const prompt = `In exactly one sentence, summarize the core messaging style and tone of ${companyName}'s ads. Be specific. Mention actual themes. Return ONLY the sentence.\n\nAds:\n${adsSample}`;
+
+    const result = await model.generateContent(prompt);
+    const summary = result.response.text().trim();
+    saveCompetitorProfile(companyName, summary);
+    return res.json({ summary, cached: false });
   } catch (err) {
     console.error(`[/api/competitor-profile/${companyName}]`, err.message);
     return res.json({ summary: 'Analysis pending...', cached: false });
