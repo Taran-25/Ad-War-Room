@@ -28,6 +28,8 @@ const { GoogleGenerativeAI } = require('@google/generative-ai');
 const {
   getCachedAds,
   getCachedAdsAny,
+  getCacheStatus,
+  getAllCacheStatuses,
   saveAds,
   saveAiBrief,
   getLatestBrief,
@@ -1341,12 +1343,109 @@ app.get('/api/ads/all', async (req, res) => {
   }
 });
 
+// ─── Helper: build cache-status map for all competitors ──────────────────────
+function buildCacheStatusMap() {
+  const now = Math.floor(Date.now() / 1000);
+  const CACHE_HOURS = 24;
+  const statuses = {};
+  for (const c of ALL_COMPETITORS) {
+    const s = getCacheStatus(c.companyName);
+    statuses[c.companyName] = {
+      ...s,
+      age_hours: s.fetched_at ? (now - s.fetched_at) / 3600 : null,
+      is_fresh: s.fetched_at ? (now - s.fetched_at) < CACHE_HOURS * 3600 : false,
+    };
+  }
+  return statuses;
+}
+
+// GET /api/cache-status — returns cache metadata for all 27 competitors (no API calls)
+app.get('/api/cache-status', (req, res) => {
+  res.json({ statuses: buildCacheStatusMap() });
+});
+
+// GET /api/ads/cached — returns only SQLite-cached ad data, never calls ScrapeCreators
+app.get('/api/ads/cached', (req, res) => {
+  const allAds = [];
+  for (const c of ALL_COMPETITORS) {
+    const ads = getCachedAdsAny(c.companyName);
+    if (ads) allAds.push(...ads);
+  }
+  res.json({
+    ads: allAds,
+    total: allAds.length,
+    cacheStatuses: buildCacheStatusMap(),
+    usingMockData: false,
+  });
+});
+
+// POST /api/ads/fetch — selective fetch: only re-fetches expired/missing competitors
+// Body: { brand?: string }  — omit or use 'All' to fetch all 27
+app.post('/api/ads/fetch', async (req, res) => {
+  const { brand } = req.body || {};
+  const companiesScope = (brand && brand !== 'All')
+    ? (COMPETITORS[brand] || []).map((c) => c.companyName)
+    : ALL_COMPETITORS.map((c) => c.companyName);
+
+  const CACHE_HOURS = 24;
+  const toFetch = [];
+  const skipped = [];
+  for (const company of companiesScope) {
+    if (getCachedAds(company, CACHE_HOURS)) {
+      skipped.push(company);
+    } else {
+      toFetch.push(company);
+    }
+  }
+
+  const fetched = [];
+  const errors = [];
+  const BATCH_SIZE = 3;
+
+  for (let i = 0; i < toFetch.length; i += BATCH_SIZE) {
+    const batch = toFetch.slice(i, i + BATCH_SIZE);
+    await Promise.all(
+      batch.map(async (company) => {
+        try {
+          const ads = await fetchAdsFromAPI(company);
+          if (ads && ads.length > 0) {
+            saveAds(company, ads);
+            fetched.push({ company, count: ads.length });
+          } else {
+            errors.push(company);
+          }
+        } catch (err) {
+          console.error(`[/api/ads/fetch] ${company}:`, err.message);
+          errors.push(company);
+        }
+      })
+    );
+  }
+
+  // Return all cached ads (full set — not just the scope)
+  const allAds = [];
+  for (const c of ALL_COMPETITORS) {
+    const ads = getCachedAdsAny(c.companyName);
+    if (ads) allAds.push(...ads);
+  }
+
+  res.json({
+    ads: allAds,
+    total: allAds.length,
+    fetched,
+    skipped,
+    errors,
+    cacheStatuses: buildCacheStatusMap(),
+    usingMockData: false,
+  });
+});
+
 // GET /api/ads/:companyName
 app.get('/api/ads/:companyName', async (req, res) => {
   const { companyName } = req.params;
 
-  // Check cache (6 hr TTL)
-  let ads = getCachedAds(companyName, 6);
+  // Check cache (24 hr TTL)
+  let ads = getCachedAds(companyName, 24);
   if (ads) {
     return res.json({ ads, cached: true, usingMockData: false });
   }
@@ -1747,7 +1846,7 @@ app.get('/api/competitor-profile/:companyName', async (req, res) => {
     const cached = getCompetitorProfile(companyName, 24);
     if (cached) return res.json({ summary: cached.summary, cached: true });
 
-    let ads = getCachedAds(companyName, 6) || SAMPLE_ADS.filter((a) => a.companyName === companyName);
+    let ads = getCachedAds(companyName, 24) || getCachedAdsAny(companyName) || SAMPLE_ADS.filter((a) => a.companyName === companyName);
     if (!ads || ads.length === 0) return res.json({ summary: 'No ad data available yet.', cached: false });
     if (!genAI) return res.json({ summary: 'Analysis pending...', cached: false });
 

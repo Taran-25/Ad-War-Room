@@ -1,8 +1,6 @@
-import { useState, useEffect, useCallback } from 'react';
-import { Outlet, useLocation, useNavigate, Link } from 'react-router-dom';
+import { useState, useEffect } from 'react';
+import { Outlet, useLocation, Link } from 'react-router-dom';
 import { useAds } from '../context/AdsContext.jsx';
-
-const API_BASE = import.meta.env.VITE_API_URL || '';
 
 const STEPS = [
   { path: '/',         label: 'Intelligence Hub', short: '1' },
@@ -37,11 +35,9 @@ const HELP_CONTENT = {
 
 export default function Layout() {
   const location = useLocation();
-  const navigate = useNavigate();
-  const { lastUpdated, usingMock, setAllAds, setLastUpdated, setUsingMock } = useAds();
+  const { lastUpdated, usingMock } = useAds();
 
   const [visitedSteps, setVisitedSteps] = useState(new Set(['/']));
-  const [refreshing, setRefreshing] = useState(false);
   const [helpOpen, setHelpOpen] = useState(false);
 
   const currentPath = location.pathname;
@@ -53,26 +49,6 @@ export default function Layout() {
       return new Set([...prev, currentPath]);
     });
   }, [currentPath]);
-
-  const handleRefresh = useCallback(async () => {
-    setRefreshing(true);
-    try {
-      await fetch(`${API_BASE}/api/refresh`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({}),
-      });
-      const res = await fetch(`${API_BASE}/api/ads/all`);
-      const data = await res.json();
-      setAllAds(data.ads || []);
-      setLastUpdated(new Date());
-      setUsingMock(data.usingMockData || false);
-    } catch (err) {
-      console.error('Refresh failed:', err);
-    } finally {
-      setRefreshing(false);
-    }
-  }, [setAllAds, setLastUpdated, setUsingMock]);
 
   const formattedTime = lastUpdated
     ? lastUpdated.toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit', hour12: false })
@@ -128,7 +104,7 @@ export default function Layout() {
             })}
           </div>
 
-          {/* Right: demo badge + updated time + refresh */}
+          {/* Right: demo badge + updated time */}
           <div className="flex items-center gap-2 flex-shrink-0">
             {usingMock && (
               <span className="hidden sm:inline-flex px-2 py-0.5 text-[10px] font-semibold bg-amber-100 text-amber-700 border border-amber-200 rounded-full uppercase tracking-wide">
@@ -140,14 +116,6 @@ export default function Layout() {
                 Updated {formattedTime}
               </span>
             )}
-            <button
-              onClick={handleRefresh}
-              disabled={refreshing}
-              className="p-1.5 rounded-lg border border-gray-200 hover:bg-gray-50 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
-              title="Refresh ad data"
-            >
-              <span className={`text-sm ${refreshing ? 'animate-spin inline-block' : ''}`}>🔄</span>
-            </button>
           </div>
         </div>
       </nav>
