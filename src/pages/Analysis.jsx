@@ -86,10 +86,14 @@ export default function Analysis() {
     try {
       const adsToAnalyze = selectedAds.length > 0 ? selectedAds : allAds;
       const isSelectionBased = selectedAds.length > 0;
+      // Strip to only fields Gemini needs — keeps payload small even with 600 ads
+      const adsPayload = adsToAnalyze.map(({ id, companyName, title, body, callToAction, daysRunning, format, brandLabel }) =>
+        ({ id, companyName, title, body, callToAction, daysRunning, format, brandLabel })
+      );
       const res = await fetch(`${API_BASE}/api/analyze`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ brand, ads: adsToAnalyze, isSelectionBased }),
+        body: JSON.stringify({ brand, ads: adsPayload, isSelectionBased }),
       });
       const data = await res.json();
       if (data.brief) {
