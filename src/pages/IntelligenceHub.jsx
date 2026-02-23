@@ -12,7 +12,7 @@
  *   7. Bottom Nav → /analysis
  */
 
-import { useState, useEffect, useMemo, useCallback } from 'react';
+import { useState, useEffect, useMemo, useCallback, useRef } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useAds } from '../context/AdsContext.jsx';
 import FilterBar from '../components/FilterBar.jsx';
@@ -151,8 +151,12 @@ export default function IntelligenceHub() {
   const [competitorProfiles, setCompetitorProfiles] = useState({});
   const [profilesLoading, setProfilesLoading] = useState(false);
   const [cacheStatus, setCacheStatus] = useState({});   // { [companyName]: { fetched_at, ad_count, has_data, age_hours, is_fresh } }
-  const [isFetching, setIsFetching] = useState(false);  // true while /api/ads/fetch is running
+  const [isFetching, setIsFetching] = useState(false);  // true while batch fetch is running
   const [fetchMsg, setFetchMsg] = useState('');          // transient status message
+
+  // Session-level dedup: track companies already fetched this browser session
+  // so switching brands back and forth never re-triggers an API call
+  const requestedCompanies = useRef(new Set());
 
   const [filterState, setFilterState] = useState({
     brand: selectedBrand || 'All',
@@ -261,23 +265,25 @@ export default function IntelligenceHub() {
       : (COMPETITORS_BY_BRAND[brand] || []);
 
     const now = Date.now() / 1000;
+
+    // Three-layer dedup: session ref → 24h cache status → server dedup
     const needsRefresh = competitorsInScope.filter((c) => {
+      if (requestedCompanies.current.has(c.companyName)) return false; // already fetched this session
       const s = cacheStatus[c.companyName];
-      if (!s?.has_data) return true;
-      return (now - s.fetched_at) >= CACHE_HOURS * 3600;
+      if (!s?.has_data) return true;                                    // no data at all
+      return (now - s.fetched_at) >= CACHE_HOURS * 3600;               // cache expired
     });
     const alreadyCached = competitorsInScope.length - needsRefresh.length;
 
     if (needsRefresh.length === 0) {
-      const names = competitorsInScope.map((c) => c.name).join(', ');
       window.alert(
-        `All ${alreadyCached} competitor${alreadyCached !== 1 ? 's' : ''} are freshly cached (within ${CACHE_HOURS} hours).\n` +
-        `No API credits will be used.\n\n${names}`
+        `All ${alreadyCached} competitor${alreadyCached !== 1 ? 's' : ''} already have fresh data ` +
+        `(within ${CACHE_HOURS} hours). No API credits needed.`
       );
       return;
     }
 
-    // Compute last fetch timestamp for context
+    // Last-fetch context for confirmation dialog
     const fetchTimes = competitorsInScope
       .filter((c) => cacheStatus[c.companyName]?.fetched_at)
       .map((c) => cacheStatus[c.companyName].fetched_at);
@@ -289,11 +295,14 @@ export default function IntelligenceHub() {
     const confirmed = window.confirm(
       `Fetch fresh ads from Meta Ad Library?\n\n` +
       `Will fetch: ${needsRefresh.length} competitor${needsRefresh.length !== 1 ? 's' : ''} (uses API credits)\n` +
-      `Already cached: ${alreadyCached} competitor${alreadyCached !== 1 ? 's' : ''} (will be skipped)\n` +
+      `Already cached / fetched: ${alreadyCached} (will be skipped)\n` +
       `Cache last updated: ${lastFetchStr}\n\n` +
       `Proceed?`
     );
     if (!confirmed) return;
+
+    // Mark in session dedup BEFORE the request (prevents double-click race)
+    needsRefresh.forEach((c) => requestedCompanies.current.add(c.companyName));
 
     setIsFetching(true);
     setFetchMsg(
@@ -302,10 +311,11 @@ export default function IntelligenceHub() {
     );
 
     try {
-      const res = await fetch(`${API_BASE}/api/ads/fetch`, {
+      // Use /api/ads/batch with explicit company list — single request, server dedupes internally
+      const res = await fetch(`${API_BASE}/api/ads/batch`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ brand: brand === 'All' ? null : brand }),
+        body: JSON.stringify({ companies: needsRefresh.map((c) => c.companyName) }),
       });
       const data = await res.json();
       setAllAds(data.ads || []);
@@ -313,9 +323,9 @@ export default function IntelligenceHub() {
       setUsingMock(false);
       if (data.cacheStatuses) setCacheStatus(data.cacheStatuses);
 
-      const fetchedCount = data.fetched?.length ?? 0;
-      const skippedCount = data.skipped?.length ?? 0;
-      const errCount    = data.errors?.length ?? 0;
+      const fetchedCount = data.fetchedCount ?? 0;
+      const skippedCount = data.cachedCount  ?? 0;
+      const errCount     = data.errors?.length ?? 0;
       setFetchMsg(
         `Done! Fetched ${fetchedCount}, skipped ${skippedCount} cached` +
         (errCount ? `, ${errCount} failed` : '') + '.'
@@ -323,6 +333,8 @@ export default function IntelligenceHub() {
       setTimeout(() => setFetchMsg(''), 5000);
     } catch (err) {
       console.error('Fetch failed:', err);
+      // Roll back session dedup so the user can retry
+      needsRefresh.forEach((c) => requestedCompanies.current.delete(c.companyName));
       setFetchMsg('Fetch failed — check your connection and try again.');
       setTimeout(() => setFetchMsg(''), 5000);
     } finally {

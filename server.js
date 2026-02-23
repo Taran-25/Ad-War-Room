@@ -1153,6 +1153,46 @@ async function fetchAdsFromAPI(companyName) {
   }
 }
 
+// ─── In-memory fetch deduplication ───────────────────────────────────────────
+// Prevents concurrent duplicate ScrapeCreators calls for the same company.
+const _pendingFetches = new Map(); // companyName → Promise<ads[]|null>
+
+/**
+ * Cache-first, deduplicated ad fetch.
+ * - Returns fresh cache immediately (no API call).
+ * - If already fetching this company, returns the in-flight Promise.
+ * - Otherwise starts a new ScrapeCreators call, saves result, and cleans up.
+ * @param {string} companyName
+ * @returns {Promise<Array|null>}
+ */
+async function fetchCompanyAds(companyName) {
+  // 1. Fresh 24h cache → return immediately, zero API usage
+  const cached = getCachedAds(companyName, 24);
+  if (cached) return cached;
+
+  // 2. Already in-flight → reuse same promise
+  if (_pendingFetches.has(companyName)) {
+    return _pendingFetches.get(companyName);
+  }
+
+  // 3. New fetch
+  const p = fetchAdsFromAPI(companyName)
+    .then((ads) => {
+      if (ads && ads.length > 0) saveAds(companyName, ads);
+      return ads || null;
+    })
+    .catch((err) => {
+      console.error(`[fetchCompanyAds] ${companyName}:`, err.message);
+      return null;
+    })
+    .finally(() => {
+      _pendingFetches.delete(companyName);
+    });
+
+  _pendingFetches.set(companyName, p);
+  return p;
+}
+
 // ─── Gemini AI ────────────────────────────────────────────────────────────────
 
 const genAI = GEMINI_API_KEY ? new GoogleGenerativeAI(GEMINI_API_KEY) : null;
@@ -1291,50 +1331,29 @@ app.get('/api/competitors', (req, res) => {
   res.json(COMPETITORS);
 });
 
-// GET /api/ads/all — must be declared BEFORE /api/ads/:companyName
+// GET /api/ads/all — legacy; uses fetchCompanyAds for dedup + cache-first
 app.get('/api/ads/all', async (req, res) => {
   try {
-    const results = {};
     const companies = ALL_COMPETITORS.map((c) => c.companyName);
-
-    // Process in batches of 3 to avoid rate limiting
+    const results = {};
     const BATCH_SIZE = 3;
+
     for (let i = 0; i < companies.length; i += BATCH_SIZE) {
       const batch = companies.slice(i, i + BATCH_SIZE);
       await Promise.all(
         batch.map(async (company) => {
-          // Check cache first (24hr TTL — matches /api/analyze and /api/brief)
-          let ads = getCachedAds(company, 24);
-          if (!ads) {
-            ads = await fetchAdsFromAPI(company);
-            if (ads && ads.length > 0) {
-              saveAds(company, ads);
-            } else {
-              // API failed — try any stale cached data first (stale-while-revalidate)
-              const stale = getCachedAdsAny(company);
-              if (stale && stale.length > 0) {
-                ads = stale;
-              } else {
-                // Last resort: fall back to SAMPLE_ADS for this company
-                ads = SAMPLE_ADS.filter((a) => a.companyName === company);
-                if (ads.length === 0) {
-                  ads = SAMPLE_ADS.filter(
-                    (a) =>
-                      a.brandLabel ===
-                      (Object.entries(COMPETITORS).find(([, list]) =>
-                        list.some((c) => c.companyName === company)
-                      )?.[0] || '')
-                  ).slice(0, 2);
-                }
-              }
-            }
+          let ads = await fetchCompanyAds(company); // cache-first + dedup
+          if (!ads || ads.length === 0) {
+            ads = getCachedAdsAny(company);         // stale fallback
           }
-          results[company] = ads;
+          if (!ads || ads.length === 0) {
+            ads = SAMPLE_ADS.filter((a) => a.companyName === company);
+          }
+          results[company] = ads || [];
         })
       );
     }
 
-    // Flatten to single array
     const allAds = Object.values(results).flat();
     res.json({ ads: allAds, total: allAds.length, usingMockData: !SCRAPE_API_KEY });
   } catch (err) {
@@ -1406,16 +1425,10 @@ app.post('/api/ads/fetch', async (req, res) => {
     const batch = toFetch.slice(i, i + BATCH_SIZE);
     await Promise.all(
       batch.map(async (company) => {
-        try {
-          const ads = await fetchAdsFromAPI(company);
-          if (ads && ads.length > 0) {
-            saveAds(company, ads);
-            fetched.push({ company, count: ads.length });
-          } else {
-            errors.push(company);
-          }
-        } catch (err) {
-          console.error(`[/api/ads/fetch] ${company}:`, err.message);
+        const ads = await fetchCompanyAds(company); // cache-first + dedup + auto-save
+        if (ads && ads.length > 0) {
+          fetched.push({ company, count: ads.length });
+        } else {
           errors.push(company);
         }
       })
@@ -1440,36 +1453,79 @@ app.post('/api/ads/fetch', async (req, res) => {
   });
 });
 
-// GET /api/ads/:companyName
+// POST /api/ads/batch — explicit company list, cache-first, deduped
+// Body: { companies: string[] }
+// Returns ALL cached ads + freshly fetched, never calls API for cached companies.
+app.post('/api/ads/batch', async (req, res) => {
+  const { companies } = req.body || {};
+  if (!Array.isArray(companies) || companies.length === 0) {
+    return res.json({ ads: [], total: 0, cachedCount: 0, fetchedCount: 0, errors: [], cacheStatuses: buildCacheStatusMap() });
+  }
+
+  const skipped = [];   // already fresh in cache
+  const toFetch = [];   // need API call
+
+  for (const company of companies) {
+    if (getCachedAds(company, 24)) {
+      skipped.push(company);
+    } else {
+      toFetch.push(company);
+    }
+  }
+
+  const fetched = [];
+  const errors  = [];
+  const BATCH_SIZE = 3;
+
+  for (let i = 0; i < toFetch.length; i += BATCH_SIZE) {
+    const batch = toFetch.slice(i, i + BATCH_SIZE);
+    await Promise.all(
+      batch.map(async (company) => {
+        const ads = await fetchCompanyAds(company); // cache-first + dedup inside
+        if (ads && ads.length > 0) {
+          fetched.push({ company, count: ads.length });
+        } else {
+          errors.push(company);
+        }
+      })
+    );
+  }
+
+  // Respond with all currently-cached ads across all competitors
+  const allAds = [];
+  for (const c of ALL_COMPETITORS) {
+    const ads = getCachedAdsAny(c.companyName);
+    if (ads) allAds.push(...ads);
+  }
+
+  res.json({
+    ads: allAds,
+    total: allAds.length,
+    cachedCount: skipped.length,
+    fetchedCount: fetched.length,
+    fetched,
+    skipped,
+    errors,
+    cacheStatuses: buildCacheStatusMap(),
+    usingMockData: false,
+  });
+});
+
+// GET /api/ads/:companyName — cache-first via fetchCompanyAds (dedup included)
 app.get('/api/ads/:companyName', async (req, res) => {
   const { companyName } = req.params;
-
-  // Check cache (24 hr TTL)
-  let ads = getCachedAds(companyName, 24);
-  if (ads) {
-    return res.json({ ads, cached: true, usingMockData: false });
-  }
-
-  // Fetch from API
-  ads = await fetchAdsFromAPI(companyName);
+  const ads = await fetchCompanyAds(companyName); // handles cache + dedup
   if (ads && ads.length > 0) {
-    saveAds(companyName, ads);
-    return res.json({ ads, cached: false, usingMockData: false });
+    return res.json({ ads, usingMockData: false });
   }
-
-  // Try stale cache before SAMPLE_ADS
+  // Stale fallback
   const stale = getCachedAdsAny(companyName);
   if (stale && stale.length > 0) {
-    return res.json({ ads: stale, cached: true, usingMockData: false });
+    return res.json({ ads: stale, usingMockData: false });
   }
-
   // Last resort: SAMPLE_ADS
   const fallback = SAMPLE_ADS.filter((a) => a.companyName === companyName);
-  res.json({
-    ads: fallback.length ? fallback : SAMPLE_ADS.slice(0, 3),
-    cached: false,
-    usingMockData: true,
-  });
+  res.json({ ads: fallback.length ? fallback : SAMPLE_ADS.slice(0, 3), usingMockData: true });
 });
 
 // POST /api/analyze
