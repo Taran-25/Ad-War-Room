@@ -2079,22 +2079,12 @@ Return ONLY a JSON object (no markdown, no code fences) with this exact structur
   ],
   "topPatterns": [
     "string describing a pattern seen across the highest-scoring ads"
-  ],
-  "videoScriptBrief": {
-    "format": "e.g. 30-second UGC testimonial video",
-    "tone": "e.g. Conversational, empathetic, science-backed",
-    "hook": "Opening line/scene that stops the scroll",
-    "body": "Core message and product benefit (2-3 sentences)",
-    "cta": "Specific call-to-action",
-    "visualDirection": "Visual style, talent, setting guidance",
-    "whyItWorks": "Why this brief will outperform the competition"
-  }
+  ]
 }
 
 Rules:
 - Score every ad provided, one entry per ad in scoredAds array
 - topPatterns: exactly 3 patterns extracted from the highest-scoring ads
-- videoScriptBrief: synthesize the best patterns into a single recommended script brief
 - Return ONLY the JSON object, no preamble, no markdown fences
 
 Ads to score:
@@ -2107,7 +2097,7 @@ ${adsJson}`;
       parsed = JSON.parse(stripMarkdownFences(text));
     } catch (parseErr) {
       console.warn('[/api/score-ads] First parse failed, retrying…');
-      const simplePrompt = `Score these ${ads.length} ads. Return ONLY JSON with scoredAds array (each: id, hookStrength, ctaClarity, emotionalAppeal, formatFit, messageClarity, total, standoutElement, weakness), topPatterns array (3 strings), videoScriptBrief object (format, tone, hook, body, cta, visualDirection, whyItWorks). Ads: ${JSON.stringify(ads.slice(0, 5).map(a => ({ id: a.id, title: a.title, body: a.body?.slice(0, 100), callToAction: a.callToAction })))}`;
+      const simplePrompt = `Score these ${ads.length} ads. Return ONLY JSON with scoredAds array (each: id, hookStrength, ctaClarity, emotionalAppeal, formatFit, messageClarity, total, standoutElement, weakness) and topPatterns array (3 strings). Ads: ${JSON.stringify(ads.slice(0, 5).map(a => ({ id: a.id, title: a.title, body: a.body?.slice(0, 100), callToAction: a.callToAction })))}`;
       const result2 = await model.generateContent(simplePrompt);
       parsed = JSON.parse(stripMarkdownFences(result2.response.text()));
     }
@@ -2134,6 +2124,95 @@ ${adsJson}`;
         'Social proof combined with ingredient science',
         'Urgency-driven CTAs with specific offers',
       ],
+      cached: false,
+    };
+    return res.json(fallback);
+  }
+});
+
+// POST /api/generate-script — generates videoScriptBrief only (independent of scoring)
+// Body: { ads: Array, regenerate?: boolean }
+app.post('/api/generate-script', async (req, res) => {
+  const { ads, regenerate } = req.body;
+  if (!ads || !Array.isArray(ads) || ads.length === 0) {
+    return res.status(400).json({ error: 'ads array required' });
+  }
+
+  const cacheKey = 'script:' + [...ads].map((a) => a.id).sort().join(',');
+  const bypassCache = regenerate === true;
+
+  try {
+    if (!bypassCache) {
+      const cached = await getAdScores(cacheKey, 1);
+      if (cached) return res.json({ ...cached, cached: true });
+    }
+
+    if (!genAI) {
+      throw new Error('GEMINI_API_KEY not set');
+    }
+
+    const model = genAI.getGenerativeModel({ model: 'gemini-2.5-flash' });
+
+    const adsJson = JSON.stringify(ads.slice(0, 20).map((a) => ({
+      id: a.id,
+      companyName: a.companyName,
+      brandLabel: a.brandLabel,
+      title: a.title,
+      body: a.body,
+      mediaType: a.mediaType,
+      callToAction: a.callToAction,
+      daysRunning: a.daysRunning,
+    })), null, 2);
+
+    const scriptPrompt = `You are a performance creative director for Mosaic Wellness (brands: Man Matters, Bebodywise, Little Joys) in the Indian wellness market.
+
+Analyse these competitor ads and generate ONE video script brief that would outperform them.
+
+Return ONLY a JSON object (no markdown, no code fences) with this exact structure:
+{
+  "videoScriptBrief": {
+    "format": "e.g. 30-second UGC testimonial video",
+    "tone": "e.g. Conversational, empathetic, science-backed",
+    "hook": "Opening line/scene that stops the scroll",
+    "body": "Core message and product benefit (2-3 sentences)",
+    "cta": "Specific call-to-action",
+    "visualDirection": "Visual style, talent, setting guidance",
+    "whyItWorks": "Why this brief will outperform the competition"
+  }
+}
+
+Rules:
+- Synthesize the strongest patterns from the highest-performing competitor ads
+- The brief must be actionable for a creative team to execute today
+- Return ONLY the JSON object, no preamble, no markdown fences
+
+Competitor ads:
+${adsJson}`;
+
+    let parsed;
+    try {
+      const result = await model.generateContent(scriptPrompt);
+      parsed = JSON.parse(stripMarkdownFences(result.response.text()));
+    } catch (parseErr) {
+      console.warn('[/api/generate-script] Parse failed, using fallback');
+      parsed = {
+        videoScriptBrief: {
+          format: '30-second UGC-style testimonial video',
+          tone: 'Conversational, science-backed, empathetic',
+          hook: 'Open with a relatable pain point your audience experiences daily',
+          body: 'Present the ingredient/solution with social proof. Show transformation in 3-4 seconds. Address the #1 objection.',
+          cta: 'Shop now — first order X% off (limited time)',
+          visualDirection: 'Real person in natural setting, close-up product shots, on-screen text for key claims',
+          whyItWorks: 'Combines authenticity of UGC with credibility of science-backed claims — the format competitors are not using together.',
+        },
+      };
+    }
+
+    await saveAdScores(cacheKey, parsed);
+    return res.json({ ...parsed, cached: false });
+  } catch (err) {
+    console.error('[/api/generate-script]', err.message);
+    return res.json({
       videoScriptBrief: {
         format: '30-second UGC-style testimonial video',
         tone: 'Conversational, science-backed, empathetic',
@@ -2144,8 +2223,7 @@ ${adsJson}`;
         whyItWorks: 'Combines authenticity of UGC with credibility of science-backed claims — the format competitors are not using together.',
       },
       cached: false,
-    };
-    return res.json(fallback);
+    });
   }
 });
 

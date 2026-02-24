@@ -62,7 +62,12 @@ function ScoringSkeletonRow() {
 
 export default function Analysis() {
   const navigate = useNavigate();
-  const { allAds, selectedAds, selectedBrand, setSelectedBrand } = useAds();
+  const {
+    allAds, selectedAds, selectedBrand, setSelectedBrand,
+    briefs, setBriefs, briefMeta, setBriefMeta,
+    scoredAds, setScoredAds, topPatterns, setTopPatterns,
+    videoScript, setVideoScript, lastAnalysedIds, setLastAnalysedIds,
+  } = useAds();
 
   // Guard: redirect to / if no ads are selected (and we have ads to select from)
   useEffect(() => {
@@ -71,13 +76,11 @@ export default function Analysis() {
     }
   }, []);
 
-  const [briefs, setBriefs] = useState({});
-  const [briefMeta, setBriefMeta] = useState({}); // { [brand]: { sampled, ad_count } }
   const [briefLoading, setBriefLoading] = useState(false);
   const fetchedBrands = useRef(new Set());
 
-  const [scores, setScores] = useState(null);
   const [scoresLoading, setScoresLoading] = useState(false);
+  const [scriptLoading, setScriptLoading] = useState(false);
   const [expandedScoreRow, setExpandedScoreRow] = useState(null);
   const [scriptCopied, setScriptCopied] = useState(false);
 
@@ -108,36 +111,37 @@ export default function Analysis() {
     }
   }, [selectedAds, allAds]);
 
-  // Initial brief load
+  // Initial brief load — skip if context already has this brand's data
   useEffect(() => {
     const brand = selectedBrand || 'All';
-    if (!fetchedBrands.current.has(brand)) {
+    if (!briefs[brand] && !fetchedBrands.current.has(brand)) {
       fetchedBrands.current.add(brand);
       fetchBriefForBrand(brand);
     }
   }, []);
 
-  // When brand changes, fetch its brief if not cached
+  // When brand changes, fetch its brief if not in context
   useEffect(() => {
     const brand = selectedBrand || 'All';
-    if (!fetchedBrands.current.has(brand)) {
+    if (!briefs[brand] && !fetchedBrands.current.has(brand)) {
       fetchedBrands.current.add(brand);
       fetchBriefForBrand(brand);
     }
   }, [selectedBrand, fetchBriefForBrand]);
 
-  // Score selected ads — bypassCache=true forces fresh Gemini run
-  const fetchScores = useCallback(async (bypassCache = false) => {
+  // Score selected ads — calls /api/score-ads, writes scoredAds + topPatterns to context
+  const fetchScores = useCallback(async () => {
     if (selectedAds.length === 0) return;
     setScoresLoading(true);
     try {
       const res = await fetch(`${API_BASE}/api/score-ads`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ ads: selectedAds, regenerate: bypassCache }),
+        body: JSON.stringify({ ads: selectedAds }),
       });
       const data = await res.json();
-      setScores(data);
+      if (data.scoredAds) setScoredAds(data.scoredAds);
+      if (data.topPatterns) setTopPatterns(data.topPatterns);
     } catch (err) {
       console.error('Score fetch failed:', err);
     } finally {
@@ -145,10 +149,34 @@ export default function Analysis() {
     }
   }, [selectedAds]);
 
-  useEffect(() => {
-    if (selectedAds.length > 0) {
-      fetchScores();
+  // Generate video script — calls /api/generate-script, writes videoScript to context
+  // bypassCache=true forces a fresh Gemini run (Regenerate button)
+  const fetchScript = useCallback(async (bypassCache = false) => {
+    if (selectedAds.length === 0) return;
+    setScriptLoading(true);
+    try {
+      const res = await fetch(`${API_BASE}/api/generate-script`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ ads: selectedAds, regenerate: bypassCache }),
+      });
+      const data = await res.json();
+      if (data.videoScriptBrief) setVideoScript(data.videoScriptBrief);
+    } catch (err) {
+      console.error('Script fetch failed:', err);
+    } finally {
+      setScriptLoading(false);
     }
+  }, [selectedAds]);
+
+  // On mount — only fetch if ads changed or no data in context yet
+  useEffect(() => {
+    if (selectedAds.length === 0) return;
+    const currentIds = selectedAds.map((a) => a.id).sort().join(',');
+    if (scoredAds.length > 0 && videoScript && currentIds === lastAnalysedIds) return;
+    setLastAnalysedIds(currentIds);
+    fetchScores();
+    fetchScript();
   }, []);
 
   // filteredAds — derived from selectedAds (or allAds if none selected), filtered by brand
@@ -160,10 +188,10 @@ export default function Analysis() {
 
   // Sorted scored ads — highest total first
   const sortedScoredAds = useMemo(() =>
-    scores?.scoredAds
-      ? [...scores.scoredAds].sort((a, b) => (b.total || 0) - (a.total || 0))
+    scoredAds.length > 0
+      ? [...scoredAds].sort((a, b) => (b.total || 0) - (a.total || 0))
       : [],
-  [scores]);
+  [scoredAds]);
 
   const currentBrief = briefs[selectedBrand || 'All'] || null;
   const currentBriefMeta = briefMeta[selectedBrand || 'All'] || null;
@@ -181,8 +209,8 @@ export default function Analysis() {
   }, [selectedBrand, fetchBriefForBrand]);
 
   const handleCopyScript = useCallback(() => {
-    if (!scores?.videoScriptBrief) return;
-    const b = scores.videoScriptBrief;
+    if (!videoScript) return;
+    const b = videoScript;
     const text = [
       `Format: ${b.format}`,
       `Tone: ${b.tone}`,
@@ -196,12 +224,11 @@ export default function Analysis() {
       setScriptCopied(true);
       setTimeout(() => setScriptCopied(false), 2000);
     });
-  }, [scores]);
+  }, [videoScript]);
 
   const handleRegenerateScript = useCallback(() => {
-    setScores(null);
-    fetchScores(true);  // bypass cache
-  }, [fetchScores]);
+    fetchScript(true);  // regenerate script only — scoring table is untouched
+  }, [fetchScript]);
 
   return (
     <div className="max-w-screen-xl mx-auto px-4 sm:px-6 lg:px-8 py-6 space-y-6">
@@ -301,11 +328,11 @@ export default function Analysis() {
         </div>
 
         {/* Top Patterns */}
-        {scores?.topPatterns && scores.topPatterns.length > 0 && (
+        {topPatterns.length > 0 && (
           <div className="px-6 py-3 bg-amber-50 border-b border-amber-100">
             <p className="text-xs font-semibold text-amber-800 mb-2">What Makes These Ads Work</p>
             <ul className="space-y-1">
-              {scores.topPatterns.map((pattern, i) => (
+              {topPatterns.map((pattern, i) => (
                 <li key={i} className="flex items-start gap-2 text-xs text-amber-700">
                   <span className="font-bold flex-shrink-0">→</span>
                   <BoldText text={pattern} />
@@ -442,22 +469,22 @@ export default function Analysis() {
           <div className="flex gap-2">
             <button
               onClick={handleCopyScript}
-              disabled={!scores?.videoScriptBrief}
+              disabled={!videoScript}
               className="px-3 py-1.5 text-xs font-medium bg-white border border-gray-200 hover:bg-gray-50 rounded-lg disabled:opacity-40 transition-colors"
             >
               {scriptCopied ? '✓ Copied!' : '📋 Copy Script'}
             </button>
             <button
               onClick={handleRegenerateScript}
-              disabled={scoresLoading}
+              disabled={scriptLoading}
               className="px-3 py-1.5 text-xs font-medium bg-white border border-gray-200 hover:bg-gray-50 rounded-lg disabled:opacity-40 transition-colors"
             >
-              {scoresLoading ? '⏳ Regenerating…' : '🔄 Regenerate'}
+              {scriptLoading ? '⏳ Regenerating…' : '🔄 Regenerate'}
             </button>
           </div>
         </div>
 
-        {scoresLoading ? (
+        {scriptLoading ? (
           <div className="p-6 space-y-3 animate-pulse">
             {[...Array(6)].map((_, i) => (
               <div key={i} className="flex gap-3">
@@ -466,15 +493,15 @@ export default function Analysis() {
               </div>
             ))}
           </div>
-        ) : scores?.videoScriptBrief ? (
+        ) : videoScript ? (
           <div className="divide-y divide-gray-100">
             {[
-              { label: 'Format / Tone', value: `${scores.videoScriptBrief.format} · ${scores.videoScriptBrief.tone}` },
-              { label: 'HOOK',              value: scores.videoScriptBrief.hook },
-              { label: 'BODY',              value: scores.videoScriptBrief.body },
-              { label: 'CTA',               value: scores.videoScriptBrief.cta },
-              { label: 'VISUAL DIRECTION',  value: scores.videoScriptBrief.visualDirection },
-              { label: 'WHY IT WORKS',      value: scores.videoScriptBrief.whyItWorks },
+              { label: 'Format / Tone', value: `${videoScript.format} · ${videoScript.tone}` },
+              { label: 'HOOK',              value: videoScript.hook },
+              { label: 'BODY',              value: videoScript.body },
+              { label: 'CTA',               value: videoScript.cta },
+              { label: 'VISUAL DIRECTION',  value: videoScript.visualDirection },
+              { label: 'WHY IT WORKS',      value: videoScript.whyItWorks },
             ].map(({ label, value }) => (
               <div key={label} className="flex gap-4 px-6 py-3">
                 <span className="text-xs font-bold text-gray-400 uppercase tracking-wide w-32 flex-shrink-0 pt-0.5">
@@ -487,7 +514,7 @@ export default function Analysis() {
         ) : (
           <div className="px-6 py-8 text-center text-gray-400 text-sm">
             <p>Video script brief will appear after ad scoring completes.</p>
-            <button onClick={fetchScores} className="mt-2 text-blue-600 hover:underline text-xs">
+            <button onClick={() => { fetchScores(); fetchScript(); }} className="mt-2 text-blue-600 hover:underline text-xs">
               Run scoring now →
             </button>
           </div>
