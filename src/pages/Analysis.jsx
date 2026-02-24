@@ -170,11 +170,13 @@ export default function Analysis() {
     }
   }, [selectedAds]);
 
-  // On mount — only fetch if ads changed or no data in context yet
+  // On mount — always reset brand pill to 'All', then fetch if selection changed
   useEffect(() => {
+    setSelectedBrand('All');
     if (selectedAds.length === 0) return;
     const currentIds = selectedAds.map((a) => a.id).sort().join(',');
     if (scoredAds.length > 0 && videoScript && currentIds === lastAnalysedIds) return;
+    setSelectedBrand('All');  // also reset on new analysis
     setLastAnalysedIds(currentIds);
     fetchScores();
     fetchScript();
