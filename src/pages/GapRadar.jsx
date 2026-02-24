@@ -114,6 +114,11 @@ export default function GapRadar() {
     }
   }, [setRedditDataCache, setRedditLoadingState]);
 
+  // Scroll to top on every mount
+  useEffect(() => {
+    window.scrollTo({ top: 0, behavior: 'instant' });
+  }, []);
+
   // Preload all 3 brands on mount — skip any already in context
   useEffect(() => {
     BRANDS.forEach((brand) => {

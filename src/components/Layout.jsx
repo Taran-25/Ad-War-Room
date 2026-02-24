@@ -8,30 +8,22 @@ const STEPS = [
   { path: '/gaps',     label: 'Gap Radar',         short: '3' },
 ];
 
-const HELP_CONTENT = {
-  '/': [
-    'Browse Brand Cards to filter ads by Mosaic vertical',
-    'Competitor Profiles show AI-generated messaging summaries',
-    'Use the filter bar to narrow by format, status, or days running',
-    'Click any ad card to select it for analysis',
-    'Select 1+ ads and hit "Analyse Selected Ads" to proceed',
-  ],
-  '/analysis': [
-    'Analysing only the ads you selected on page 1',
-    'Brand pills update KPIs, briefs, and charts simultaneously',
-    'Ad Scoring Table rates each ad on Hook, CTA, Emotion, Format, Clarity',
-    'Click any scored row to see standout element and weakness',
-    '"Copy Script" copies the AI-generated video script brief to clipboard',
-    '"Regenerate" forces a fresh Gemini scoring run',
-  ],
-  '/gaps': [
-    'Focus Brand selector drives all Reddit data on this page',
-    'Consumer Complaints surface real pain points from Reddit',
-    'Gap Opportunities show what competitors are NOT addressing',
-    'Copy Angle copies a suggested ad angle to your clipboard',
-    'Refresh Reddit Data forces a fresh fetch (2hr cache)',
-  ],
-};
+const HELP_CONTENT = `HOW AD WAR ROOM WORKS
+
+📊 Step 1 — Intelligence Hub
+Browse competitor ads from Man Matters, Bebodywise, and Little Joys rivals. Filter by brand, format, and duration. Select the ads you want to analyse by clicking on them, then press Analyse Selected.
+
+🔍 Step 2 — Analysis
+See AI-generated insights based on your selected ads. View ad scores, creative trends, messaging shifts, and a video script brief. Use brand pills to filter analysis by specific brand. Switch to All to see the full picture.
+
+🎯 Step 3 — Gap Radar
+Discover unmet consumer needs by comparing what Reddit communities are saying vs what competitors are advertising. Use gap opportunities to find angles competitors are missing.
+
+💡 Tips
+- Select ads from multiple brands for a cross-brand analysis
+- Proven Performer badge = ad running 60+ days
+- Regenerate only refreshes the video script, not scores
+- Reddit data loads for all 3 brands automatically`;
 
 export default function Layout() {
   const location = useLocation();
@@ -53,8 +45,6 @@ export default function Layout() {
   const formattedTime = lastUpdated
     ? lastUpdated.toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit', hour12: false })
     : null;
-
-  const helpBullets = HELP_CONTENT[currentPath] || HELP_CONTENT['/'];
 
   return (
     <>
@@ -125,47 +115,35 @@ export default function Layout() {
         <Outlet />
       </main>
 
-      {/* Floating ? help button */}
+      {/* Floating ? help button — top-right to avoid overlap with page floating buttons */}
       <button
         type="button"
         onClick={(e) => { e.preventDefault(); e.stopPropagation(); setHelpOpen(true); }}
-        className="fixed bottom-6 right-6 w-12 h-12 bg-amber-400 rounded-full flex items-center justify-center shadow-lg z-50 hover:bg-amber-500 transition-colors text-xl font-bold"
-        title="Help"
+        className="fixed top-20 right-6 w-10 h-10 bg-amber-400 rounded-full flex items-center justify-center shadow-lg z-40 hover:bg-amber-500 transition-colors text-lg font-bold"
+        title="How it works"
       >
         ?
       </button>
 
-      {/* Help modal */}
+      {/* Help modal — read only, no navigation links */}
       {helpOpen && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
+        <div
+          className="fixed inset-0 bg-black bg-opacity-50 z-50 flex items-center justify-center"
+          onClick={() => setHelpOpen(false)}
+        >
           <div
-            className="absolute inset-0 bg-black/50"
-            onClick={() => setHelpOpen(false)}
-          />
-          <div className="relative bg-white rounded-2xl shadow-2xl max-w-md w-full p-6">
+            className="bg-white rounded-2xl p-6 max-w-md mx-4 shadow-2xl max-h-[80vh] overflow-y-auto"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <h3 className="font-bold text-lg mb-4">How Ad War Room Works</h3>
+            <p className="text-gray-600 text-sm whitespace-pre-line leading-relaxed">
+              {HELP_CONTENT}
+            </p>
             <button
               onClick={() => setHelpOpen(false)}
-              className="absolute top-4 right-4 text-gray-400 hover:text-gray-600 text-xl"
+              className="mt-6 w-full px-4 py-2 bg-gray-100 rounded-xl text-sm font-medium hover:bg-gray-200 transition-colors"
             >
-              ✕
-            </button>
-            <h2 className="text-base font-bold text-gray-900 mb-1">
-              {STEPS.find((s) => s.path === currentPath)?.label || 'Help'}
-            </h2>
-            <p className="text-xs text-gray-400 mb-4">How to use this page</p>
-            <ul className="space-y-2">
-              {helpBullets.map((bullet, i) => (
-                <li key={i} className="flex items-start gap-2 text-sm text-gray-700">
-                  <span className="text-amber-500 font-bold flex-shrink-0 mt-0.5">→</span>
-                  {bullet}
-                </li>
-              ))}
-            </ul>
-            <button
-              onClick={() => setHelpOpen(false)}
-              className="mt-4 w-full py-2 text-xs bg-gray-100 rounded-lg font-medium text-gray-600 hover:bg-gray-200 transition-colors"
-            >
-              Close
+              Got it
             </button>
           </div>
         </div>

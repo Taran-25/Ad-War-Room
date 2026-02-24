@@ -70,6 +70,11 @@ export default function Analysis() {
     selectedBrands, setRedirectTargetBrand,
   } = useAds();
 
+  // Scroll to top on every mount so page never opens mid-scroll
+  useEffect(() => {
+    window.scrollTo({ top: 0, behavior: 'instant' });
+  }, []);
+
   // Guard: redirect to / if no ads are selected (and we have ads to select from)
   useEffect(() => {
     if (allAds.length > 0 && selectedAds.length === 0) {
