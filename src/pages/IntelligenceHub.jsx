@@ -145,7 +145,12 @@ function SkeletonProfileCard() {
 
 export default function IntelligenceHub() {
   const navigate = useNavigate();
-  const { allAds, setAllAds, selectedAds, setSelectedAds, selectedBrand, setSelectedBrand, setLastUpdated, setUsingMock } = useAds();
+  const {
+    allAds, setAllAds, selectedAds, setSelectedAds,
+    selectedBrand, setSelectedBrand,
+    setLastUpdated, setUsingMock,
+    redirectTargetBrand, setRedirectTargetBrand,
+  } = useAds();
 
   const [adsLoading, setAdsLoading] = useState(allAds.length === 0);
   const [competitorProfiles, setCompetitorProfiles] = useState({});
@@ -166,6 +171,19 @@ export default function IntelligenceHub() {
     sort: 'daysRunning',
     minDays: 0,
   });
+
+  // ── Handle redirect from Page 2 (locked brand pill → "Go to Intelligence Hub") ──
+  useEffect(() => {
+    if (!redirectTargetBrand) return;
+    // Pre-select the brand and scroll to the ads grid
+    setFilterState((prev) => ({ ...prev, brand: redirectTargetBrand, competitor: 'all' }));
+    setSelectedBrand(redirectTargetBrand);
+    setRedirectTargetBrand(null);
+    setTimeout(() => {
+      const el = document.getElementById('ads-grid-section');
+      if (el) el.scrollIntoView({ behavior: 'smooth', block: 'start' });
+    }, 300);
+  }, []);
 
   // ── Load CACHED ads on mount — no ScrapeCreators API call ─────────────────
   useEffect(() => {
@@ -415,6 +433,18 @@ export default function IntelligenceHub() {
 
   const liveCount = `${filteredAds.length} of ${allAds.length} ads`;
 
+  // Floating "Analyse Selected" button — appears once ads grid scrolls into view
+  const [showFloatingAnalyse, setShowFloatingAnalyse] = useState(false);
+  useEffect(() => {
+    const handleScroll = () => {
+      const el = document.getElementById('ads-grid-section');
+      if (!el) return;
+      setShowFloatingAnalyse(el.getBoundingClientRect().top < window.innerHeight * 0.75);
+    };
+    window.addEventListener('scroll', handleScroll, { passive: true });
+    return () => window.removeEventListener('scroll', handleScroll);
+  }, []);
+
   // How many of the currently-scoped competitors need a refresh
   const scopedNeedsRefresh = useMemo(() => {
     const now = Date.now() / 1000;
@@ -642,7 +672,7 @@ export default function IntelligenceHub() {
       )}
 
       {/* ── Section 5: Selectable Ad Grid ── */}
-      <section>
+      <section id="ads-grid-section">
         <div className="flex items-center gap-2 mb-4">
           <h2 className="text-base font-semibold text-gray-800">Competitor Ads</h2>
           <span className="text-xs text-gray-400">{filteredAds.length} shown</span>
@@ -678,6 +708,21 @@ export default function IntelligenceHub() {
           />
         )}
       </section>
+
+      {/* ── Floating Analyse Button ── */}
+      {showFloatingAnalyse && (
+        <button
+          onClick={() => navigate('/analysis')}
+          disabled={selectedAds.length === 0}
+          className={`fixed bottom-6 right-6 z-50 flex items-center gap-2 px-5 py-3 rounded-full font-bold text-sm shadow-lg transition-all ${
+            selectedAds.length > 0
+              ? 'bg-amber-500 hover:bg-amber-600 text-white'
+              : 'bg-gray-200 text-gray-400 cursor-not-allowed'
+          }`}
+        >
+          Analyse Selected ({selectedAds.length}) →
+        </button>
+      )}
 
       {/* ── Section 6: Bottom Nav ── */}
       <div className="flex justify-end pb-4">

@@ -67,6 +67,7 @@ export default function Analysis() {
     briefs, setBriefs, briefMeta, setBriefMeta,
     scoredAds, setScoredAds, topPatterns, setTopPatterns,
     videoScript, setVideoScript, lastAnalysedIds, setLastAnalysedIds,
+    selectedBrands, setRedirectTargetBrand,
   } = useAds();
 
   // Guard: redirect to / if no ads are selected (and we have ads to select from)
@@ -230,6 +231,35 @@ export default function Analysis() {
     fetchScript(true);  // regenerate script only — scoring table is untouched
   }, [fetchScript]);
 
+  // ── Brand pill lock / redirect logic ──────────────────────────────────────
+  const [redirectDialog, setRedirectDialog] = useState({ open: false, targetBrand: null });
+
+  const handleBrandPillClick = useCallback((brand) => {
+    if (brand === 'All' || selectedBrands.includes(brand)) {
+      setSelectedBrand(brand);
+      return;
+    }
+    setRedirectDialog({ open: true, targetBrand: brand });
+  }, [selectedBrands, setSelectedBrand]);
+
+  const handleRedirectToHub = useCallback((targetBrand) => {
+    setRedirectTargetBrand(targetBrand);
+    setRedirectDialog({ open: false, targetBrand: null });
+    navigate('/');
+  }, [setRedirectTargetBrand, navigate]);
+
+  // Floating "Gap Radar →" button — appears once user scrolls past KPI cards
+  const [showFloatingGapRadar, setShowFloatingGapRadar] = useState(false);
+  useEffect(() => {
+    const handleScroll = () => {
+      const el = document.getElementById('kpi-cards-section');
+      if (!el) return;
+      setShowFloatingGapRadar(el.getBoundingClientRect().bottom < 0);
+    };
+    window.addEventListener('scroll', handleScroll, { passive: true });
+    return () => window.removeEventListener('scroll', handleScroll);
+  }, []);
+
   return (
     <div className="max-w-screen-xl mx-auto px-4 sm:px-6 lg:px-8 py-6 space-y-6">
 
@@ -266,16 +296,20 @@ export default function Analysis() {
       <div className="flex flex-wrap gap-2">
         {BRANDS.map((brand) => {
           const isActive = (selectedBrand || 'All') === brand;
+          const isAvailable = brand === 'All' || selectedBrands.includes(brand);
           return (
             <button
               key={brand}
-              onClick={() => setSelectedBrand(brand)}
-              className={`px-4 py-1.5 rounded-full text-sm font-medium border transition-all ${
+              onClick={() => handleBrandPillClick(brand)}
+              className={`px-4 py-1.5 rounded-full text-sm font-medium border transition-all flex items-center gap-1 ${
                 isActive
                   ? BRAND_PILL_ACTIVE[brand]
-                  : `bg-white border ${BRAND_PILL_INACTIVE[brand]}`
+                  : isAvailable
+                    ? `bg-white border ${BRAND_PILL_INACTIVE[brand]}`
+                    : 'bg-gray-100 text-gray-400 border-gray-200 cursor-pointer'
               }`}
             >
+              {!isAvailable && <span className="text-xs">🔒</span>}
               {brand}
             </button>
           );
@@ -288,7 +322,9 @@ export default function Analysis() {
       </div>
 
       {/* ── Section 3: KPI Cards ── */}
-      <KPICards ads={filteredAds} />
+      <div id="kpi-cards-section">
+        <KPICards ads={filteredAds} />
+      </div>
 
       {/* ── Section 4: Weekly Brief ── */}
       <AIInsightsPanel
@@ -520,6 +556,53 @@ export default function Analysis() {
           </div>
         )}
       </div>
+
+      {/* ── Redirect Dialog ── */}
+      {redirectDialog.open && (
+        <div
+          className="fixed inset-0 bg-black bg-opacity-50 z-50 flex items-center justify-center"
+          onClick={() => setRedirectDialog({ open: false, targetBrand: null })}
+        >
+          <div
+            className="bg-white rounded-2xl p-6 max-w-sm mx-4 shadow-2xl"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="text-2xl mb-3">🔒</div>
+            <h3 className="font-bold text-lg mb-2">
+              No {redirectDialog.targetBrand} ads selected
+            </h3>
+            <p className="text-gray-600 text-sm mb-5">
+              To analyse <strong>{redirectDialog.targetBrand}</strong> competitors, you need to
+              select their ads first. Would you like to go to the Intelligence Hub and select{' '}
+              {redirectDialog.targetBrand} competitor ads?
+            </p>
+            <div className="flex gap-3">
+              <button
+                onClick={() => setRedirectDialog({ open: false, targetBrand: null })}
+                className="flex-1 px-4 py-2 rounded-xl border border-gray-200 text-gray-600 text-sm hover:bg-gray-50 transition-colors"
+              >
+                Stay here
+              </button>
+              <button
+                onClick={() => handleRedirectToHub(redirectDialog.targetBrand)}
+                className="flex-1 px-4 py-2 rounded-xl bg-amber-400 hover:bg-amber-500 text-white text-sm font-medium transition-colors"
+              >
+                Go to Intelligence Hub →
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ── Floating Gap Radar Button ── */}
+      {showFloatingGapRadar && (
+        <button
+          onClick={() => navigate('/gaps')}
+          className="fixed bottom-6 right-6 z-50 flex items-center gap-2 px-5 py-3 rounded-full font-bold text-sm shadow-lg bg-amber-500 hover:bg-amber-600 text-white transition-all"
+        >
+          Gap Radar →
+        </button>
+      )}
 
       {/* ── Section 9: Bottom Nav ── */}
       <div className="flex flex-col sm:flex-row items-stretch sm:items-center justify-between gap-3 pb-4">
