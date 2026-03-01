@@ -18,6 +18,7 @@ import { useAds } from '../context/AdsContext.jsx';
 import FilterBar from '../components/FilterBar.jsx';
 import AdGrid from '../components/AdGrid.jsx';
 import Bold from '../components/Bold.jsx';
+import CompetitorCard from '../components/CompetitorCard.jsx';
 
 const API_BASE = import.meta.env.VITE_API_URL || '';
 
@@ -103,34 +104,6 @@ const COMPETITORS_BY_BRAND = Object.fromEntries(
 // Flat list of all 27 competitors
 const ALL_COMPETITORS_FLAT = Object.values(COMPETITORS_BY_BRAND).flat();
 
-// Tier badge styles
-const TIER_STYLES = {
-  direct:     { label: 'Direct',     style: 'bg-red-100 text-red-700' },
-  indirect:   { label: 'Indirect',   style: 'bg-amber-100 text-amber-700' },
-  adjacent:   { label: 'Adjacent',   style: 'bg-gray-100 text-gray-600' },
-  peripheral: { label: 'Peripheral', style: 'bg-gray-100 text-gray-600' },
-  productLed: { label: 'Product-led', style: 'bg-gray-100 text-gray-600' },
-  platform:   { label: 'Platform',   style: 'bg-gray-100 text-gray-600' },
-};
-
-const BRAND_BADGE_STYLE = {
-  'Man Matters': 'bg-blue-100 text-blue-700',
-  'Bebodywise':  'bg-pink-100 text-pink-700',
-  'Little Joys': 'bg-green-100 text-green-700',
-};
-
-const CACHE_HOURS = 24;
-
-/** Returns badge label + CSS class for a competitor's cache status */
-function getCacheBadge(status) {
-  if (!status?.has_data) return { label: 'No data', cls: 'bg-gray-100 text-gray-400' };
-  const ageHours = (Date.now() / 1000 - status.fetched_at) / 3600;
-  if (ageHours >= CACHE_HOURS) return { label: 'Expired', cls: 'bg-red-100 text-red-700' };
-  if (ageHours >= 18) return { label: `${Math.round(ageHours)}h ago`, cls: 'bg-amber-100 text-amber-700' };
-  if (ageHours >= 6) return { label: `${Math.round(ageHours)}h ago`, cls: 'bg-amber-100 text-amber-600' };
-  const mins = Math.round(ageHours * 60);
-  return { label: mins < 1 ? 'Just now' : `${mins}m ago`, cls: 'bg-green-100 text-green-700' };
-}
 
 function SkeletonProfileCard() {
   return (
@@ -562,69 +535,19 @@ export default function IntelligenceHub() {
         </h2>
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3">
           {visibleCompetitors.map((competitor) => {
-            const stats = competitorStats[competitor.companyName] || { total: 0, video: 0, image: 0, carousel: 0 };
-            const summary = competitorProfiles[competitor.companyName];
             const brandLabel = Object.entries(COMPETITORS_BY_BRAND).find(([, list]) =>
               list.some((c) => c.companyName === competitor.companyName)
             )?.[0] || '';
-            const tierInfo = competitor.tier ? (TIER_STYLES[competitor.tier] || { label: competitor.tier, style: 'bg-gray-100 text-gray-600' }) : null;
-            const cs = cacheStatus[competitor.companyName];
-            const badge = getCacheBadge(cs);
-
             return (
-              <div key={competitor.companyName} className="bg-white rounded-xl border border-gray-200 p-4 space-y-2">
-                <div className="flex items-start justify-between">
-                  <div className="space-y-1">
-                    <p className="text-sm font-bold text-gray-900">{competitor.name}</p>
-                    <div className="flex items-center gap-1 flex-wrap">
-                      {brandLabel && (
-                        <span className={`text-[10px] font-medium px-1.5 py-0.5 rounded-full ${BRAND_BADGE_STYLE[brandLabel] || 'bg-gray-100 text-gray-600'}`}>
-                          {brandLabel}
-                        </span>
-                      )}
-                      {tierInfo && (
-                        <span className={`text-[10px] font-medium px-1.5 py-0.5 rounded-full ${tierInfo.style}`}>
-                          {tierInfo.label}
-                        </span>
-                      )}
-                      {/* Cache status badge */}
-                      <span className={`text-[10px] font-medium px-1.5 py-0.5 rounded-full ${badge.cls}`}>
-                        {badge.label}
-                      </span>
-                    </div>
-                  </div>
-                  <div className="text-right flex-shrink-0">
-                    <p className="text-xs font-bold text-gray-700"><Bold>{stats.total}</Bold> <span className="font-normal text-gray-400">ads</span></p>
-                    <p
-                      className="text-[10px] text-gray-400"
-                      title="v = Video  |  i = Image  |  c = Carousel"
-                      style={{ cursor: 'help' }}
-                    >
-                      {stats.video > 0 && `${stats.video}v `}
-                      {stats.image > 0 && `${stats.image}i `}
-                      {stats.carousel > 0 && `${stats.carousel}c`}
-                    </p>
-                  </div>
-                </div>
-
-                {!cs?.has_data ? (
-                  <p className="text-xs text-gray-400 italic">No ad data yet. Click "Fetch Fresh Ads" to load.</p>
-                ) : !summary ? (
-                  <div className="space-y-1.5">
-                    <div className="h-3 w-full bg-gray-100 rounded animate-pulse" />
-                    <div className="h-3 w-4/5 bg-gray-100 rounded animate-pulse" />
-                  </div>
-                ) : (
-                  <p className="text-xs text-gray-500 leading-relaxed">{summary}</p>
-                )}
-
-                <button
-                  onClick={() => setFilterState((prev) => ({ ...prev, competitor: competitor.companyName, brand: brandLabel || prev.brand }))}
-                  className="text-xs text-blue-600 hover:text-blue-800 font-medium"
-                >
-                  View Ads ↓
-                </button>
-              </div>
+              <CompetitorCard
+                key={competitor.companyName}
+                competitor={competitor}
+                stats={competitorStats[competitor.companyName] || { total: 0, video: 0, image: 0, carousel: 0 }}
+                summary={competitorProfiles[competitor.companyName]}
+                brandLabel={brandLabel}
+                cacheStatus={cacheStatus[competitor.companyName]}
+                onViewAds={() => setFilterState((prev) => ({ ...prev, competitor: competitor.companyName, brand: brandLabel || prev.brand }))}
+              />
             );
           })}
         </div>

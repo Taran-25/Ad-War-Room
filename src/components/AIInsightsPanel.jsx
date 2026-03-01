@@ -13,11 +13,18 @@
  */
 
 import { BoldText } from '../utils/boldKeywords.jsx';
+import { HighlightText } from '../utils/highlightKeywords.jsx';
 
 const PRIORITY_STYLES = {
   high: 'bg-red-100 text-red-700 border-red-200',
   medium: 'bg-amber-100 text-amber-700 border-amber-200',
   low: 'bg-green-100 text-green-700 border-green-200',
+};
+
+const BORDER_STYLES = {
+  high:   'border-l-4 border-red-400 pl-3',
+  medium: 'border-l-4 border-amber-400 pl-3',
+  low:    'border-l-4 border-green-400 pl-3',
 };
 
 const THREAT_STYLES = {
@@ -100,13 +107,39 @@ export default function AIInsightsPanel({ brief, isLoading, onAnalyze, threatLev
               </button>
             </div>
           ) : (
-            <ul className="space-y-3">
+            <ul className="space-y-4">
               {insights.map((item, i) => (
-                <li key={i} className="flex items-start gap-3">
-                  <span className={`mt-0.5 px-1.5 py-0.5 text-[10px] font-semibold rounded border uppercase tracking-wide flex-shrink-0 ${PRIORITY_STYLES[item.priority] || PRIORITY_STYLES.medium}`}>
-                    {item.priority || 'med'}
-                  </span>
-                  <BoldText text={item.insight} className="text-sm text-gray-700 leading-relaxed" />
+                <li key={i} className={`py-1 ${BORDER_STYLES[item.priority] || BORDER_STYLES.medium}`}>
+                  {/* Insight row */}
+                  <div className="flex items-start gap-2">
+                    <span className={`mt-0.5 px-1.5 py-0.5 text-[10px] font-semibold rounded border uppercase tracking-wide flex-shrink-0 ${PRIORITY_STYLES[item.priority] || PRIORITY_STYLES.medium}`}>
+                      {item.priority || 'med'}
+                    </span>
+                    <HighlightText text={item.insight} className="text-sm text-gray-700 leading-relaxed" />
+                  </div>
+
+                  {/* Recommendation block */}
+                  {item.recommendation && (
+                    <div className="mt-2 ml-7 bg-orange-50 border border-orange-100 rounded-lg p-2.5 text-xs space-y-1">
+                      <p className="flex items-start gap-1.5">
+                        <span className="text-orange-500 flex-shrink-0 font-bold leading-relaxed">→</span>
+                        <span>
+                          <span className="font-semibold text-orange-700">Do: </span>
+                          <HighlightText text={item.recommendation.what} className="text-gray-700" />
+                        </span>
+                      </p>
+                      {item.recommendation.timeline && (
+                        <p className="text-gray-500 pl-4">
+                          Timeline: <span className="font-medium text-gray-700">{item.recommendation.timeline}</span>
+                        </p>
+                      )}
+                      {item.recommendation.measure && (
+                        <p className="text-gray-500 pl-4">
+                          Measure: <span className="font-medium text-gray-700">{item.recommendation.measure}</span>
+                        </p>
+                      )}
+                    </div>
+                  )}
                 </li>
               ))}
             </ul>

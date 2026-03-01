@@ -1381,7 +1381,16 @@ Analyze the following competitor ad data and return a JSON object (no markdown, 
 
 {
   "topInsights": [
-    { "insight": "string", "priority": "high|medium|low", "brand": "string" }
+    {
+      "insight": "string",
+      "priority": "high|medium|low",
+      "brand": "string",
+      "recommendation": {
+        "what": "specific 1-sentence action for the Mosaic team",
+        "timeline": "immediate|this week|this month",
+        "measure": "key metric to track success"
+      }
+    }
   ],
   "weeklyBrief": "string (2-3 paragraph narrative summary)",
   "messagingShifts": [
@@ -1401,7 +1410,7 @@ Analyze the following competitor ad data and return a JSON object (no markdown, 
 }
 
 Rules:
-- topInsights: 5-7 bullet insights, ordered by priority
+- topInsights: 5-7 insights ordered by priority; each insight MUST include a recommendation object with: what (specific 1-sentence action for the Mosaic team to take NOW), timeline (exactly "immediate", "this week", or "this month"), and measure (the single key metric to track success)
 - weeklyBrief: written as an internal intelligence briefing for a CMO
 - messagingShifts: You MUST provide at least 2 entries. If you cannot detect a clear before/after pivot, infer one based on the dominant messaging pattern vs what a newer competitor is doing differently. Never return empty string for oldMessage or newMessage.
 - creativeTrends: identify patterns in ad formats, hooks, visual styles; direction must be "rising", "stable", or "declining" based on market momentum
@@ -1429,7 +1438,7 @@ ${adsJson}
   // Second attempt with simplified prompt
   const simplePrompt = `
 Return ONLY a JSON object (no markdown, no code fences) analyzing these competitor ads for the ${brand} wellness brand category.
-Include: topInsights (array of {insight, priority, brand}), weeklyBrief (string), creativeTrends (array of {trend, count, percentage, brand, direction}), opportunityGaps (array of strings), provenPerformers (array of {adId, competitor, daysRunning, why}), messagingShifts (array), threatLevel (string), threatReason (string).
+Include: topInsights (array of {insight, priority, brand, recommendation: {what, timeline, measure}}), weeklyBrief (string), creativeTrends (array of {trend, count, percentage, brand, direction}), opportunityGaps (array of strings), provenPerformers (array of {adId, competitor, daysRunning, why}), messagingShifts (array), threatLevel (string), threatReason (string).
 For each creativeTrend, direction must be exactly "rising", "stable", or "declining".
 Ad count: ${ads.length}. Top competitor: ${ads[0]?.companyName || 'unknown'}.
 Ads: ${JSON.stringify(ads.slice(0, 10))}
