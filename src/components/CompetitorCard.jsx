@@ -178,11 +178,11 @@ const COMPETITOR_RESEARCH = {
   },
 
   // ── Little Joys: Direct ───────────────────────────────────────────────────
-  meemeeofficial: {
-    reason: 'Popular baby products brand (feeding, nursing, toys) competing in Little Joys\' product categories.',
-    threats: ['Strong offline + online brand recall among new mothers', 'Wide product range driving high trust', 'Mass-market distribution and price accessibility'],
-    messagingWatch: 'Any move into baby nutrition, supplements, or paediatric health claims.',
-    researchTests: 'Product range trust vs specific-need solution creative for new parents.',
+  gritzo: {
+    reason: 'India\'s leading kids nutrition D2C brand (SuperMilk, protein shakes, vitamins for children). Directly competes with Little Joys in the children\'s health supplement space.',
+    threats: ['Strong pediatrician-backed trust signals', 'Age-specific nutrition positioning (4-7, 8-13, 14+ years)', 'High repeat-purchase subscription model'],
+    messagingWatch: 'School performance, height growth, and immunity claims in ad creative.',
+    researchTests: 'Nutrition-outcome creative vs gentle ingredient-first messaging for parent purchase intent.',
   },
   themomsco: {
     reason: 'Natural, toxin-free baby + mum care brand. Direct overlap with Little Joys\' clean formulation promise.',

@@ -32,7 +32,7 @@ function phrasesRe(terms) {
 const DIRECT_NAMES = [
   'Traya Health', 'Traya', 'Bold Care', 'BoldCare', 'RxMen',
   'Gynoveda', 'Oziva', 'OZiva', 'Nua Woman', 'Nua', 'Kindlife',
-  'Mee Mee', 'MeeMee', 'The Moms Co', "The Mom's Co", 'Mylo',
+  'Gritzo', 'The Moms Co', "The Mom's Co", 'Mylo',
 ];
 
 const INDIRECT_NAMES = [

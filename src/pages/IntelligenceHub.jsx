@@ -76,7 +76,7 @@ const COMPETITOR_TIERS = {
   },
   'Little Joys': {
     direct: [
-      { name: 'Mee Mee',     companyName: 'meemeeofficial' },
+      { name: 'Gritzo',      companyName: 'gritzo' },
       { name: 'The Moms Co', companyName: 'themomsco' },
       { name: 'Mylo',        companyName: 'mylo' },
     ],
