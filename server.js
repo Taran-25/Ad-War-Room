@@ -158,25 +158,36 @@ function isEnglishText(text) {
 async function translateAdsToEnglish(ads, companyName) {
   if (!genAI) return ads;
   const nonEnglishIdxs = ads.reduce((acc, ad, i) => {
-    if (!isEnglishText(ad.body || '')) acc.push(i);
+    // Check body AND title — skip if already translated or already attempted
+    if (!ad.translationAttempted && (
+      !isEnglishText(ad.body || '') || !isEnglishText(ad.title || '')
+    )) acc.push(i);
     return acc;
   }, []);
   if (nonEnglishIdxs.length === 0) return ads;
 
+  const adsCopy = ads.map((ad) => ({ ...ad }));
+
+  // Mark attempted BEFORE the API call so a cache-save on error won't retry endlessly
+  nonEnglishIdxs.forEach((adIdx) => {
+    adsCopy[adIdx].translationAttempted = true;
+  });
+
   try {
-    const model = genAI.getGenerativeModel({ model: 'gemini-1.5-flash' });
+    const model = genAI.getGenerativeModel({ model: 'gemini-2.5-flash' });
     const snippets = nonEnglishIdxs
-      .map((i, n) => `[${n}] ${ads[i].body || ''}`)
+      .map((i, n) => `[${n}]\nTITLE: ${ads[i].title || ''}\nBODY: ${ads[i].body || ''}`)
       .join('\n---\n');
-    const prompt = `Translate the following ad copy snippets to English. Return ONLY a JSON array of strings in the same order, no markdown, no extra text.\n\n${snippets}`;
+    const prompt = `Translate the following ad titles and bodies to English. Return ONLY a JSON array of objects with "title" and "body" string keys in the same order, no markdown, no extra text.\n\n${snippets}`;
     const result = await model.generateContent(prompt);
     const raw = result.response.text().trim().replace(/^```json?\n?|\n?```$/g, '');
     const translations = JSON.parse(raw);
 
-    const adsCopy = ads.map((ad) => ({ ...ad }));
     nonEnglishIdxs.forEach((adIdx, n) => {
-      if (translations[n]) {
-        adsCopy[adIdx].body = translations[n];
+      const t = translations[n];
+      if (t) {
+        if (t.body) adsCopy[adIdx].body = t.body;
+        if (t.title) adsCopy[adIdx].title = t.title;
         adsCopy[adIdx].translated = true;
       }
     });
@@ -184,7 +195,8 @@ async function translateAdsToEnglish(ads, companyName) {
     return adsCopy;
   } catch (err) {
     console.error(`[translateAdsToEnglish] ${companyName}:`, err.message);
-    return ads;
+    // Return adsCopy (with translationAttempted=true set) so we don't retry on next cache hit
+    return adsCopy;
   }
 }
 
@@ -1149,7 +1161,8 @@ async function fetchAdsFromAPI(companyName, searchQuery) {
 
     // ScrapeCreators returns { searchResults: [...], searchResultsCount: N, cursor: "..." }
     const raw = response.data?.searchResults || response.data?.ads || [];
-    if (!Array.isArray(raw) || raw.length === 0) return null;
+    if (!Array.isArray(raw)) return null;
+    if (raw.length === 0) return []; // API succeeded but no active ads — distinguish from error
 
     const brandLabel =
       Object.entries(COMPETITORS).find(([, list]) =>
@@ -1249,9 +1262,21 @@ const _pendingFetches = new Map(); // companyName → Promise<ads[]|null>
  * @returns {Promise<Array|null>}
  */
 async function fetchCompanyAds(companyName) {
-  // 1. Fresh 24h cache → return immediately, zero API usage
+  // 1. Fresh 24h cache → re-translate if needed, then return
   const cached = await getCachedAds(companyName, 24);
-  if (cached) return cached;
+  if (cached) {
+    // Re-translate any non-English ads that weren't translated on original fetch
+    // (e.g. cached before translation was added, or Gemini was unavailable)
+    const needsTranslation = genAI && cached.some(
+      (ad) => !ad.translationAttempted && (!isEnglishText(ad.body || '') || !isEnglishText(ad.title || ''))
+    );
+    if (needsTranslation) {
+      const translated = await translateAdsToEnglish(cached, companyName);
+      await saveAds(companyName, translated); // persist translations back to cache
+      return translated;
+    }
+    return cached;
+  }
 
   // 2. Already in-flight → reuse same promise
   if (_pendingFetches.has(companyName)) {
@@ -1268,12 +1293,17 @@ async function fetchCompanyAds(companyName) {
   // 4. New fetch — with category filtering + translation pipeline
   const p = fetchAdsFromAPI(companyName, searchQuery)
     .then(async (ads) => {
-      if (!ads || ads.length === 0) return null;
+      if (ads === null) return null; // true API error — caller adds to errors list
+      if (ads.length === 0) {
+        // API succeeded but no active ads — save empty cache entry so it shows as "loaded"
+        await saveAds(companyName, []);
+        return [];
+      }
       // Strip off-topic ads (e.g. non-baby Mylo results)
       let filtered = filterRelevantAds(ads, brandLabel);
-      // Translate non-English ad copy to English
+      // Translate non-English ad copy (title + body) to English
       filtered = await translateAdsToEnglish(filtered, companyName);
-      if (filtered.length > 0) await saveAds(companyName, filtered);
+      await saveAds(companyName, filtered);
       return filtered;
     })
     .catch((err) => {
@@ -1521,7 +1551,8 @@ app.post('/api/ads/fetch', async (req, res) => {
     await Promise.all(
       batch.map(async (company) => {
         const ads = await fetchCompanyAds(company); // cache-first + dedup + auto-save
-        if (ads && ads.length > 0) {
+        if (ads !== null) {
+          // null = true API error; [] = no active ads (still counts as fetched)
           fetched.push({ company, count: ads.length });
         } else {
           errors.push(company);
@@ -1577,7 +1608,8 @@ app.post('/api/ads/batch', async (req, res) => {
     await Promise.all(
       batch.map(async (company) => {
         const ads = await fetchCompanyAds(company); // cache-first + dedup inside
-        if (ads && ads.length > 0) {
+        if (ads !== null) {
+          // null = true API error; [] = no active ads (still counts as fetched)
           fetched.push({ company, count: ads.length });
         } else {
           errors.push(company);
