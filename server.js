@@ -1512,8 +1512,20 @@ app.get('/api/cache-status', async (req, res) => {
 app.get('/api/ads/cached', async (req, res) => {
   const allAds = [];
   for (const c of ALL_COMPETITORS) {
-    const ads = await getCachedAdsAny(c.companyName);
-    if (ads) allAds.push(...ads);
+    let ads = await getCachedAdsAny(c.companyName);
+    if (!ads || ads.length === 0) {
+      if (ads) allAds.push(); // empty array — company has cache entry, just no ads
+      continue;
+    }
+    // Re-translate any non-English ads that weren't translated when originally cached
+    const needsTranslation = genAI && ads.some(
+      (ad) => !ad.translationAttempted && (!isEnglishText(ad.body || '') || !isEnglishText(ad.title || ''))
+    );
+    if (needsTranslation) {
+      ads = await translateAdsToEnglish(ads, c.companyName);
+      await saveAds(c.companyName, ads); // persist translations back to cache
+    }
+    allAds.push(...ads);
   }
   res.json({
     ads: allAds,

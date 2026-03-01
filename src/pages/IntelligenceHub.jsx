@@ -245,13 +245,15 @@ export default function IntelligenceHub() {
   // ── Cache stats derived from cacheStatus ──────────────────────────────────
   const cacheStats = useMemo(() => {
     const now = Date.now() / 1000;
-    let freshCount = 0;
+    let loadedCount = 0; // has ANY data (fresh or stale)
+    let freshCount = 0;  // has fresh data (<24h)
     let latestFetch = 0;
     let oldestFreshExpiry = Infinity;
 
     for (const c of ALL_COMPETITORS_FLAT) {
       const s = cacheStatus[c.companyName];
       if (!s?.has_data) continue;
+      loadedCount++; // counts regardless of freshness
       const isFresh = (now - s.fetched_at) < CACHE_HOURS * 3600;
       if (s.fetched_at > latestFetch) latestFetch = s.fetched_at;
       if (isFresh) {
@@ -279,7 +281,7 @@ export default function IntelligenceHub() {
       nextRefreshIn = `${h}h ${m}m`;
     }
 
-    return { freshCount, total, lastRefreshStr, nextRefreshIn };
+    return { loadedCount, freshCount, total, lastRefreshStr, nextRefreshIn };
   }, [cacheStatus]);
 
   // ── Handle "Fetch Fresh Ads" ──────────────────────────────────────────────
@@ -505,9 +507,12 @@ export default function IntelligenceHub() {
             {adsLoading ? (
               <span className="text-gray-400 animate-pulse">Checking cache…</span>
             ) : (
-              <span className={`font-semibold ${cacheStats.freshCount === cacheStats.total ? 'text-green-600' : cacheStats.freshCount === 0 ? 'text-red-500' : 'text-amber-600'}`}>
-                {cacheStats.freshCount}/{cacheStats.total} competitors loaded
+              <span className={`font-semibold ${cacheStats.loadedCount === cacheStats.total ? 'text-green-600' : cacheStats.loadedCount === 0 ? 'text-red-500' : 'text-amber-600'}`}>
+                {cacheStats.loadedCount}/{cacheStats.total} competitors loaded
               </span>
+              {cacheStats.freshCount < cacheStats.loadedCount && cacheStats.loadedCount > 0 && (
+                <span className="text-gray-400 ml-1">({cacheStats.freshCount} fresh)</span>
+              )}
             )}
             {!adsLoading && cacheStats.lastRefreshStr && (
               <span className="text-gray-400"> · Last refresh: {cacheStats.lastRefreshStr}</span>
