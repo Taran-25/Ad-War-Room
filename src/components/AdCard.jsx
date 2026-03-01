@@ -100,9 +100,9 @@ export default function AdCard({ ad, selectable = false, selected = false, onSel
 
           {/* Right side: translated badge + selected badge + status dot */}
           <div className="flex items-center gap-1.5 flex-shrink-0">
-            {ad.translated && (
-              <span className="px-1.5 py-0.5 text-[10px] font-medium rounded-full bg-gray-100 text-gray-500 border border-gray-200">
-                Translated
+            {ad.bodyGenerated && (
+              <span className="px-1.5 py-0.5 text-[10px] font-medium rounded-full bg-purple-50 text-purple-500 border border-purple-200">
+                AI desc
               </span>
             )}
             {selectable && selected && (

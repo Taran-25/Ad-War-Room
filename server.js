@@ -151,44 +151,58 @@ function isEnglishText(text) {
 }
 
 /**
- * Batch-translate non-English ad bodies using Gemini (1 API call per company).
- * Sets `translated: true` on each mutated ad.
- * Returns original ads untouched if Gemini is unavailable or translation fails.
+ * Remove ads whose body text is non-English.
+ * Simpler and more reliable than translation.
  */
-async function translateAdsToEnglish(ads, companyName) {
+function filterEnglishAds(ads) {
+  const before = ads.length;
+  const filtered = ads.filter(ad => isEnglishText(ad.body || ''));
+  const removed = before - filtered.length;
+  if (removed > 0) console.log(`[filterEnglishAds] Removed ${removed} non-English ads`);
+  return filtered;
+}
+
+/**
+ * Use Gemini to generate a 1-sentence English description for any ad with
+ * a missing or very short body. Saves as bodyGenerated:true flag.
+ * Returns ads unchanged if Gemini is unavailable or the call fails.
+ */
+async function generateMissingDescriptions(ads, companyName) {
   if (!genAI) return ads;
 
-  // Only check body text; skip ads already successfully translated
-  const nonEnglishIdxs = ads.reduce((acc, ad, i) => {
-    if (!ad.translated && !isEnglishText(ad.body || '')) acc.push(i);
+  const emptyIdxs = ads.reduce((acc, ad, i) => {
+    if (!ad.body || ad.body.trim().length < 15) acc.push(i);
     return acc;
   }, []);
-  if (nonEnglishIdxs.length === 0) return ads;
+  if (emptyIdxs.length === 0) return ads;
 
   try {
     const model = genAI.getGenerativeModel({ model: 'gemini-2.5-flash' });
-    const snippets = nonEnglishIdxs
-      .map((i, n) => `[${n}] ${ads[i].body || ''}`)
-      .join('\n---\n');
-    const prompt = `Translate the following ad copy snippets to English. Return ONLY a JSON array of strings in the same order, no markdown, no extra text.\n\n${snippets}`;
+    const items = emptyIdxs
+      .map((i, n) => {
+        const ad = ads[i];
+        return `[${n}] Brand: ${ad.companyName}, Title: "${ad.title || 'N/A'}", Format: ${ad.mediaType || 'unknown'}, CTA: "${ad.callToAction || 'Learn More'}"`;
+      })
+      .join('\n');
+    const prompt = `Write a concise 1-sentence marketing ad description in English for each ad below, based on brand, title, format and CTA. Be realistic for an Indian D2C wellness brand. Return ONLY a JSON array of strings in the same order, no markdown.\n\n${items}`;
     const result = await model.generateContent(prompt);
     const raw = result.response.text().trim().replace(/^```json?\n?|\n?```$/g, '');
-    const translations = JSON.parse(raw);
-    if (!Array.isArray(translations)) throw new Error('Expected JSON array response');
+    const descriptions = JSON.parse(raw);
+    if (!Array.isArray(descriptions)) throw new Error('Expected array');
 
-    const adsCopy = ads.map((ad) => ({ ...ad }));
-    nonEnglishIdxs.forEach((adIdx, n) => {
-      const t = translations[n];
-      if (typeof t === 'string' && t.trim()) {
-        adsCopy[adIdx].body = t;
-        adsCopy[adIdx].translated = true; // only set on confirmed success
+    const adsCopy = ads.map(ad => ({ ...ad }));
+    emptyIdxs.forEach((adIdx, n) => {
+      const d = descriptions[n];
+      if (typeof d === 'string' && d.trim()) {
+        adsCopy[adIdx].body = d;
+        adsCopy[adIdx].bodyGenerated = true;
       }
     });
-    console.log(`[translateAdsToEnglish] ${companyName}: translated ${nonEnglishIdxs.length} ads`);
+    console.log(`[generateMissingDescriptions] ${companyName}: generated ${emptyIdxs.length} descriptions`);
     return adsCopy;
   } catch (err) {
-    console.error(`[translateAdsToEnglish] ${companyName}:`, err.message);
-    return ads; // return original unchanged — no flags set, retry allowed next request
+    console.error(`[generateMissingDescriptions] ${companyName}:`, err.message);
+    return ads;
   }
 }
 
@@ -1181,12 +1195,16 @@ async function fetchAdsFromAPI(companyName, searchQuery) {
         Math.floor((now - start) / (1000 * 60 * 60 * 24))
       );
 
-      // Body text lives in snapshot.body.text or snapshot.cards[].body
+      // Body text — try every known field the ScrapeCreators API may populate
       const snapshot = ad.snapshot || {};
       const bodyText =
         snapshot.body?.text ||
         snapshot.cards?.[0]?.body ||
         ad.ad_creative_bodies?.[0] ||
+        snapshot.link_description ||
+        snapshot.caption ||
+        ad.ad_creative_link_descriptions?.[0] ||
+        snapshot.cards?.[0]?.caption ||
         '';
 
       // Title from page name + card headline
@@ -1254,18 +1272,16 @@ const _pendingFetches = new Map(); // companyName → Promise<ads[]|null>
  * @returns {Promise<Array|null>}
  */
 async function fetchCompanyAds(companyName) {
-  // 1. Fresh 24h cache → re-translate if needed, then return
+  // 1. Fresh 24h cache → clean if needed, then return
   const cached = await getCachedAds(companyName, 24);
   if (cached) {
-    // Re-translate any non-English ads that weren't successfully translated before
-    // (e.g. cached before translation was added, or previous Gemini call failed)
-    const needsTranslation = genAI && cached.some(
-      (ad) => !ad.translated && !isEnglishText(ad.body || '')
-    );
-    if (needsTranslation) {
-      const translated = await translateAdsToEnglish(cached, companyName);
-      await saveAds(companyName, translated); // persist translations back to cache
-      return translated;
+    const hasNonEnglish = cached.some(ad => !isEnglishText(ad.body || ''));
+    const hasMissingBody = cached.some(ad => !ad.body || ad.body.trim().length < 15);
+    if (hasNonEnglish || hasMissingBody) {
+      let cleaned = filterEnglishAds(cached);
+      cleaned = await generateMissingDescriptions(cleaned, companyName);
+      await saveAds(companyName, cleaned);
+      return cleaned;
     }
     return cached;
   }
@@ -1293,8 +1309,9 @@ async function fetchCompanyAds(companyName) {
       }
       // Strip off-topic ads (e.g. non-baby Mylo results)
       let filtered = filterRelevantAds(ads, brandLabel);
-      // Translate non-English ad copy (title + body) to English
-      filtered = await translateAdsToEnglish(filtered, companyName);
+      // Remove non-English ads, then generate descriptions for any with empty body
+      filtered = filterEnglishAds(filtered);
+      filtered = await generateMissingDescriptions(filtered, companyName);
       await saveAds(companyName, filtered);
       return filtered;
     })
@@ -1518,13 +1535,13 @@ app.get('/api/ads/cached', async (req, res) => {
       if (ads) allAds.push(); // empty array — company has cache entry, just no ads
       continue;
     }
-    // Re-translate any non-English ads that weren't successfully translated before
-    const needsTranslation = genAI && ads.some(
-      (ad) => !ad.translated && !isEnglishText(ad.body || '')
-    );
-    if (needsTranslation) {
-      ads = await translateAdsToEnglish(ads, c.companyName);
-      await saveAds(c.companyName, ads); // persist translations back to cache
+    // Clean up non-English and fill missing descriptions on first load from cache
+    const hasNonEnglish = ads.some(ad => !isEnglishText(ad.body || ''));
+    const hasMissingBody = ads.some(ad => !ad.body || ad.body.trim().length < 15);
+    if (hasNonEnglish || hasMissingBody) {
+      ads = filterEnglishAds(ads);
+      ads = await generateMissingDescriptions(ads, c.companyName);
+      await saveAds(c.companyName, ads);
     }
     allAds.push(...ads);
   }
