@@ -104,6 +104,7 @@ const COMPETITORS_BY_BRAND = Object.fromEntries(
 // Flat list of all 27 competitors
 const ALL_COMPETITORS_FLAT = Object.values(COMPETITORS_BY_BRAND).flat();
 
+const CACHE_HOURS = 24;
 
 function SkeletonProfileCard() {
   return (
