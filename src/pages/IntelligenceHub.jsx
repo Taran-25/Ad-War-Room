@@ -507,12 +507,14 @@ export default function IntelligenceHub() {
             {adsLoading ? (
               <span className="text-gray-400 animate-pulse">Checking cache…</span>
             ) : (
-              <span className={`font-semibold ${cacheStats.loadedCount === cacheStats.total ? 'text-green-600' : cacheStats.loadedCount === 0 ? 'text-red-500' : 'text-amber-600'}`}>
-                {cacheStats.loadedCount}/{cacheStats.total} competitors loaded
-              </span>
-              {cacheStats.freshCount < cacheStats.loadedCount && cacheStats.loadedCount > 0 && (
-                <span className="text-gray-400 ml-1">({cacheStats.freshCount} fresh)</span>
-              )}
+              <>
+                <span className={`font-semibold ${cacheStats.loadedCount === cacheStats.total ? 'text-green-600' : cacheStats.loadedCount === 0 ? 'text-red-500' : 'text-amber-600'}`}>
+                  {cacheStats.loadedCount}/{cacheStats.total} competitors loaded
+                </span>
+                {cacheStats.freshCount < cacheStats.loadedCount && cacheStats.loadedCount > 0 && (
+                  <span className="text-gray-400 ml-1">({cacheStats.freshCount} fresh)</span>
+                )}
+              </>
             )}
             {!adsLoading && cacheStats.lastRefreshStr && (
               <span className="text-gray-400"> · Last refresh: {cacheStats.lastRefreshStr}</span>
