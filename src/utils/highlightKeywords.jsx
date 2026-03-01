@@ -3,13 +3,14 @@
  * Parses AI-generated text into highlighted JSX segments.
  *
  * Rules (applied in priority order, earliest match wins):
- *  1. Numbers / % / multipliers / currency  → text-blue-600 font-semibold
- *  2. Mosaic brands                         → brand colours + font-semibold
- *  3. Direct competitors                    → text-red-600 font-bold
- *  4. Indirect competitors                  → text-amber-600 font-medium
- *  5. Adjacent / peripheral                 → text-blue-500
- *  6. Key concept phrases                   → bg-yellow-100 rounded px-0.5
- *  7. Action verbs                          → font-bold text-orange-600
+ *  1. Durations / time expressions          → text-blue-600 font-semibold
+ *  2. Numbers / % / multipliers / currency  → text-blue-600 font-semibold
+ *  3. Mosaic brands                         → brand colours + font-semibold
+ *  4. Direct competitors                    → text-red-600 font-bold
+ *  5. Indirect competitors                  → text-amber-600 font-medium
+ *  6. Adjacent / peripheral                 → text-blue-500
+ *  7. Key concept phrases                   → bg-yellow-100 rounded px-0.5
+ *  8. Action verbs                          → font-bold text-orange-600
  */
 
 function esc(s) {
@@ -58,6 +59,10 @@ const KEY_CONCEPTS = [
   'Proven Performer', 'Hook Strength', 'Gap Opportunity', 'Unmet Need',
   'Weekly Brief', 'Creative Trends', 'Messaging Shift', 'Threat Level',
   'Video Script', 'Active Ads', 'Days Running', 'CTA', 'Insight', 'Sentiment',
+  // Business concepts
+  'subscription lock-in', 'direct calls-to-action', 'calls-to-action',
+  'call-to-action', 'UGC', 'clinically proven', 'Ayurvedic', 'social proof',
+  'proven performer', 'brand equity', 'market share', 'ad fatigue',
 ];
 
 const ACTION_VERBS = [
@@ -71,7 +76,13 @@ const ACTION_VERBS = [
 // avoiding shared lastIndex state across renders.
 
 const RULES = [
-  // 1. Numbers / percentages / multipliers / currency
+  // 1. Durations / time expressions — must come before plain-number rule
+  //    so "440 days" matches as a unit, not just "440"
+  {
+    re:  () => /(\b\d+\s*(?:days?|months?|weeks?|hours?|years?)\b|within\s+\d+\s+(?:days?|weeks?|months?)\b|this\s+(?:month|week|year)\b)/gi,
+    cls: 'text-blue-600 font-semibold',
+  },
+  // 2. Numbers / percentages / multipliers / currency
   {
     re:  () => /(\b\d+(?:[.,]\d+)*(?:%|x|X|\+)?\b|\b₹\s*\d[\d,]*)/g,
     cls: 'text-blue-600 font-semibold',

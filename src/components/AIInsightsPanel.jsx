@@ -155,7 +155,7 @@ export default function AIInsightsPanel({ brief, isLoading, onAnalyze, threatLev
                 {opportunityGaps.map((gap, i) => (
                   <li key={i} className="flex items-start gap-2 text-sm text-gray-600">
                     <span className="text-green-500 mt-0.5 flex-shrink-0">→</span>
-                    <BoldText text={gap} />
+                    <HighlightText text={gap} />
                   </li>
                 ))}
               </ul>
@@ -169,7 +169,7 @@ export default function AIInsightsPanel({ brief, isLoading, onAnalyze, threatLev
           <div>
             <h3 className="text-sm font-semibold text-gray-700 mb-3 flex items-center gap-2">
               <span>📋</span>
-              {selectedBrand && selectedBrand !== 'All' ? `${selectedBrand} — Weekly Brief` : 'All Brands — Weekly Brief'}
+              Weekly Brief
             </h3>
             {isLoading ? (
               <div className="space-y-2">
@@ -179,7 +179,7 @@ export default function AIInsightsPanel({ brief, isLoading, onAnalyze, threatLev
                 <SkeletonLine width="w-4/5" />
               </div>
             ) : weeklyBrief ? (
-              <BoldText text={weeklyBrief} className="text-sm text-gray-600 leading-relaxed" />
+              <HighlightText text={weeklyBrief} className="text-sm text-gray-600 leading-relaxed" />
             ) : (
               <p className="text-sm text-gray-400 italic">Brief will appear after analysis.</p>
             )}
