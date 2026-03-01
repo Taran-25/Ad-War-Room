@@ -157,46 +157,38 @@ function isEnglishText(text) {
  */
 async function translateAdsToEnglish(ads, companyName) {
   if (!genAI) return ads;
+
+  // Only check body text; skip ads already successfully translated
   const nonEnglishIdxs = ads.reduce((acc, ad, i) => {
-    // Check body AND title — skip if already translated or already attempted
-    if (!ad.translationAttempted && (
-      !isEnglishText(ad.body || '') || !isEnglishText(ad.title || '')
-    )) acc.push(i);
+    if (!ad.translated && !isEnglishText(ad.body || '')) acc.push(i);
     return acc;
   }, []);
   if (nonEnglishIdxs.length === 0) return ads;
 
-  const adsCopy = ads.map((ad) => ({ ...ad }));
-
-  // Mark attempted BEFORE the API call so a cache-save on error won't retry endlessly
-  nonEnglishIdxs.forEach((adIdx) => {
-    adsCopy[adIdx].translationAttempted = true;
-  });
-
   try {
     const model = genAI.getGenerativeModel({ model: 'gemini-2.5-flash' });
     const snippets = nonEnglishIdxs
-      .map((i, n) => `[${n}]\nTITLE: ${ads[i].title || ''}\nBODY: ${ads[i].body || ''}`)
+      .map((i, n) => `[${n}] ${ads[i].body || ''}`)
       .join('\n---\n');
-    const prompt = `Translate the following ad titles and bodies to English. Return ONLY a JSON array of objects with "title" and "body" string keys in the same order, no markdown, no extra text.\n\n${snippets}`;
+    const prompt = `Translate the following ad copy snippets to English. Return ONLY a JSON array of strings in the same order, no markdown, no extra text.\n\n${snippets}`;
     const result = await model.generateContent(prompt);
     const raw = result.response.text().trim().replace(/^```json?\n?|\n?```$/g, '');
     const translations = JSON.parse(raw);
+    if (!Array.isArray(translations)) throw new Error('Expected JSON array response');
 
+    const adsCopy = ads.map((ad) => ({ ...ad }));
     nonEnglishIdxs.forEach((adIdx, n) => {
       const t = translations[n];
-      if (t) {
-        if (t.body) adsCopy[adIdx].body = t.body;
-        if (t.title) adsCopy[adIdx].title = t.title;
-        adsCopy[adIdx].translated = true;
+      if (typeof t === 'string' && t.trim()) {
+        adsCopy[adIdx].body = t;
+        adsCopy[adIdx].translated = true; // only set on confirmed success
       }
     });
     console.log(`[translateAdsToEnglish] ${companyName}: translated ${nonEnglishIdxs.length} ads`);
     return adsCopy;
   } catch (err) {
     console.error(`[translateAdsToEnglish] ${companyName}:`, err.message);
-    // Return adsCopy (with translationAttempted=true set) so we don't retry on next cache hit
-    return adsCopy;
+    return ads; // return original unchanged — no flags set, retry allowed next request
   }
 }
 
@@ -1265,10 +1257,10 @@ async function fetchCompanyAds(companyName) {
   // 1. Fresh 24h cache → re-translate if needed, then return
   const cached = await getCachedAds(companyName, 24);
   if (cached) {
-    // Re-translate any non-English ads that weren't translated on original fetch
-    // (e.g. cached before translation was added, or Gemini was unavailable)
+    // Re-translate any non-English ads that weren't successfully translated before
+    // (e.g. cached before translation was added, or previous Gemini call failed)
     const needsTranslation = genAI && cached.some(
-      (ad) => !ad.translationAttempted && (!isEnglishText(ad.body || '') || !isEnglishText(ad.title || ''))
+      (ad) => !ad.translated && !isEnglishText(ad.body || '')
     );
     if (needsTranslation) {
       const translated = await translateAdsToEnglish(cached, companyName);
@@ -1517,9 +1509,9 @@ app.get('/api/ads/cached', async (req, res) => {
       if (ads) allAds.push(); // empty array — company has cache entry, just no ads
       continue;
     }
-    // Re-translate any non-English ads that weren't translated when originally cached
+    // Re-translate any non-English ads that weren't successfully translated before
     const needsTranslation = genAI && ads.some(
-      (ad) => !ad.translationAttempted && (!isEnglishText(ad.body || '') || !isEnglishText(ad.title || ''))
+      (ad) => !ad.translated && !isEnglishText(ad.body || '')
     );
     if (needsTranslation) {
       ads = await translateAdsToEnglish(ads, c.companyName);
