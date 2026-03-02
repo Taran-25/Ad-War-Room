@@ -1251,7 +1251,7 @@ async function fetchAdsFromAPI(companyName, searchQuery) {
         targetDemographic: ad.demographic_distribution?.[0]?.gender
           ? `${ad.demographic_distribution[0].gender} ${ad.demographic_distribution[0].age || ''}`
           : 'Unknown',
-        adUrl: ad.ad_snapshot_url || (ad.ad_archive_id ? `https://www.facebook.com/ads/library/?id=${ad.ad_archive_id}` : null),
+        adUrl: ad.ad_snapshot_url || ((ad.ad_archive_id || ad.adArchiveID) ? `https://www.facebook.com/ads/library/?id=${ad.ad_archive_id || ad.adArchiveID}` : null),
       };
     });
   } catch (err) {
