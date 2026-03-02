@@ -418,9 +418,22 @@ export default function Analysis() {
                       >
                         <td className="px-3 py-3 text-gray-400">{idx + 1}</td>
                         <td className="px-3 py-3 max-w-[200px]">
-                          <p className="truncate text-gray-700 font-medium">
-                            {(ad?.title || ad?.body || '—').slice(0, 80)}
-                          </p>
+                          {ad?.adUrl ? (
+                            <a
+                              href={ad.adUrl}
+                              target="_blank"
+                              rel="noopener noreferrer"
+                              onClick={(e) => e.stopPropagation()}
+                              className="truncate text-gray-700 font-medium block hover:underline cursor-pointer"
+                            >
+                              {(ad?.title || ad?.body || '—').slice(0, 80)}
+                              <span className="ml-1 text-gray-400 text-[10px]">↗</span>
+                            </a>
+                          ) : (
+                            <p className="truncate text-gray-700 font-medium">
+                              {(ad?.title || ad?.body || '—').slice(0, 80)}
+                            </p>
+                          )}
                           <p className="text-gray-400 truncate">{ad?.companyName}</p>
                         </td>
                         <td className="px-3 py-3">

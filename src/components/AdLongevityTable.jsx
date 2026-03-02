@@ -95,9 +95,23 @@ export default function AdLongevityTable({ ads }) {
                   </td>
                   {/* Ad title (truncated) */}
                   <td className="pr-3 py-3 max-w-xs">
-                    <p className="text-gray-700 truncate max-w-[200px]" title={ad.title}>
-                      {ad.title || ad.body?.slice(0, 50) || '—'}
-                    </p>
+                    {ad.adUrl ? (
+                      <a
+                        href={ad.adUrl}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        onClick={(e) => e.stopPropagation()}
+                        className="text-gray-700 truncate max-w-[200px] block hover:underline cursor-pointer"
+                        title={ad.title}
+                      >
+                        {ad.title || ad.body?.slice(0, 50) || '—'}
+                        <span className="ml-1 text-gray-400 text-[10px]">↗</span>
+                      </a>
+                    ) : (
+                      <p className="text-gray-700 truncate max-w-[200px]" title={ad.title}>
+                        {ad.title || ad.body?.slice(0, 50) || '—'}
+                      </p>
+                    )}
                   </td>
                   {/* Days running */}
                   <td className="pr-3 py-3 text-right">

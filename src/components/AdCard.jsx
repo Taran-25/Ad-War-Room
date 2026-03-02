@@ -194,6 +194,19 @@ export default function AdCard({ ad, selectable = false, selected = false, onSel
             Impressions: {ad.impressions}
           </p>
         )}
+
+        {/* View Ad link — only shown when adUrl exists */}
+        {ad.adUrl && (
+          <a
+            href={ad.adUrl}
+            target="_blank"
+            rel="noopener noreferrer"
+            onClick={(e) => e.stopPropagation()}
+            className="inline-flex items-center gap-1 text-[11px] text-gray-500 hover:text-blue-600 hover:underline transition-colors"
+          >
+            View Ad ↗
+          </a>
+        )}
       </div>
     </div>
   );
