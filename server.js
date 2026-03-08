@@ -1510,16 +1510,17 @@ app.get('/api/ads/all', async (req, res) => {
 async function buildCacheStatusMap() {
   const now = Math.floor(Date.now() / 1000);
   const CACHE_HOURS = 24;
-  const statuses = {};
-  for (const c of ALL_COMPETITORS) {
-    const s = await getCacheStatus(c.companyName);
-    statuses[c.companyName] = {
-      ...s,
-      age_hours: s.fetched_at ? (now - s.fetched_at) / 3600 : null,
-      is_fresh: s.fetched_at ? (now - s.fetched_at) < CACHE_HOURS * 3600 : false,
-    };
-  }
-  return statuses;
+  const entries = await Promise.all(
+    ALL_COMPETITORS.map(async (c) => {
+      const s = await getCacheStatus(c.companyName);
+      return [c.companyName, {
+        ...s,
+        age_hours: s.fetched_at ? (now - s.fetched_at) / 3600 : null,
+        is_fresh: s.fetched_at ? (now - s.fetched_at) < CACHE_HOURS * 3600 : false,
+      }];
+    })
+  );
+  return Object.fromEntries(entries);
 }
 
 // GET /api/cache-status — returns cache metadata for all 27 competitors (no API calls)
@@ -1529,29 +1530,38 @@ app.get('/api/cache-status', async (req, res) => {
 
 // GET /api/ads/cached — returns only SQLite-cached ad data, never calls ScrapeCreators
 app.get('/api/ads/cached', async (req, res) => {
-  const allAds = [];
-  for (const c of ALL_COMPETITORS) {
-    let ads = await getCachedAdsAny(c.companyName);
-    if (!ads || ads.length === 0) {
-      if (ads) allAds.push(); // empty array — company has cache entry, just no ads
-      continue;
-    }
-    // Clean up non-English and fill missing descriptions on first load from cache
-    const hasNonEnglish = ads.some(ad => !isEnglishText(ad.body || ''));
-    const hasMissingBody = ads.some(ad => !ad.body || ad.body.trim().length < 15);
-    if (hasNonEnglish || hasMissingBody) {
-      ads = filterEnglishAds(ads);
-      ads = await generateMissingDescriptions(ads, c.companyName);
-      await saveAds(c.companyName, ads);
-    }
-    allAds.push(...ads);
+  // Fetch all companies and cache status in parallel
+  const [adsResults, cacheStatuses] = await Promise.all([
+    Promise.all(ALL_COMPETITORS.map(async (c) => {
+      let ads = await getCachedAdsAny(c.companyName);
+      if (!ads || ads.length === 0) return { companyName: c.companyName, ads: [], needsCleanup: false };
+      const hasNonEnglish = ads.some(ad => !isEnglishText(ad.body || ''));
+      if (hasNonEnglish) ads = filterEnglishAds(ads);
+      const hasMissingBody = ads.some(ad => !ad.body || ad.body.trim().length < 15);
+      return { companyName: c.companyName, ads, needsCleanup: hasMissingBody };
+    })),
+    buildCacheStatusMap(),
+  ]);
+
+  const allAds = adsResults.flatMap(r => r.ads);
+
+  // Respond immediately — don't block on AI description generation
+  res.json({ ads: allAds, total: allAds.length, cacheStatuses, usingMockData: false });
+
+  // Generate missing descriptions in the background (saved for next load)
+  const needsCleanup = adsResults.filter(r => r.needsCleanup && r.ads.length > 0);
+  if (needsCleanup.length > 0) {
+    setImmediate(async () => {
+      for (const { companyName, ads } of needsCleanup) {
+        try {
+          const updated = await generateMissingDescriptions(ads, companyName);
+          await saveAds(companyName, updated);
+        } catch (err) {
+          console.error('[bg descriptions]', companyName, err.message);
+        }
+      }
+    });
   }
-  res.json({
-    ads: allAds,
-    total: allAds.length,
-    cacheStatuses: await buildCacheStatusMap(),
-    usingMockData: false,
-  });
 });
 
 // POST /api/ads/fetch — selective fetch: only re-fetches expired/missing competitors
