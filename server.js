@@ -88,7 +88,7 @@ const COMPETITORS = {
     { name: 'Kindlife',         companyName: 'kindlife' },
     { name: 'Minimalist',       companyName: 'theminimalist' },
     { name: 'Dot and Key',      companyName: 'dotandkey' },
-    { name: 'WOW Skin Science', companyName: 'wowskinscienceindia' },
+    { name: 'WOW Skin Science', companyName: 'wowskinscienceindia', searchQuery: 'Wow Skin Science India' },
     { name: 'Plum Goodness',    companyName: 'plumgoodness' },
     { name: 'Pilgrim',          companyName: 'pilgrimbeauty' },
     { name: 'mCaffeine',        companyName: 'mcaffeine' },
@@ -1253,7 +1253,7 @@ async function fetchAdsFromAPI(companyName, searchQuery) {
           : 'Unknown',
         adUrl: ad.ad_snapshot_url || ((ad.ad_archive_id || ad.adArchiveID) ? `https://www.facebook.com/ads/library/?id=${ad.ad_archive_id || ad.adArchiveID}` : null),
       };
-    });
+    }).filter(ad => isEnglishText(ad.body || ad.title || ''));
   } catch (err) {
     console.error(`[ScrapeCreators] Failed for ${companyName}:`, err.message);
     return null;
