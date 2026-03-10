@@ -44,7 +44,7 @@ const INDIRECT_NAMES = [
 const ADJACENT_NAMES = [
   'Kapiva', 'Fast and Up', 'FastAndUp', 'Healthkart', 'HealthKart',
   'Plum Goodness', 'Plum', 'Pilgrim', 'mCaffeine', 'MCaffeine',
-  'Himalaya Baby', 'Sebamed Baby', 'Chicco India', 'Chicco',
+  'Himalaya Baby', 'Sebamed Baby', 'Mother Sparsh', 'MotherSparsh',
   'FirstCry', 'First Cry',
 ];
 

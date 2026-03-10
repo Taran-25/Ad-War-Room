@@ -52,7 +52,7 @@ Bebodywise (indirect):   theminimalist, dotandkey, wowskinscienceindia
 Bebodywise (peripheral): plumgoodness, pilgrimbeauty, mcaffeine
 
 Little Joys (direct):      babychakra, themomsco, mylo
-Little Joys (productLed):  himalayababycare, sebamedbaby, chiccoindia
+Little Joys (productLed):  himalayababycare, sebamedbaby, mothersparsh
 Little Joys (platform):    firstcry
 ```
 

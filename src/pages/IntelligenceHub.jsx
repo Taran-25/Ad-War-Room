@@ -83,7 +83,7 @@ const COMPETITOR_TIERS = {
     productLed: [
       { name: 'Himalaya Baby', companyName: 'himalayababycare' },
       { name: 'Sebamed Baby',  companyName: 'sebamedbaby' },
-      { name: 'Chicco India',  companyName: 'chiccoindia' },
+      { name: 'Mother Sparsh', companyName: 'mothersparsh' },
     ],
     platform: [
       { name: 'FirstCry', companyName: 'firstcry' },

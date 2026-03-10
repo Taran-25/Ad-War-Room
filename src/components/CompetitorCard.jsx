@@ -210,11 +210,11 @@ const COMPETITOR_RESEARCH = {
     messagingWatch: 'Expansion into baby nutrition, supplements, or developmental wellness.',
     researchTests: 'Dermatologist-proof creative vs gentle naturals messaging for premium parents.',
   },
-  chiccoindia: {
-    reason: 'Global premium baby products brand (gear, toys, care). Creating a full-stack babyhood brand.',
-    threats: ['International brand trust and premium positioning', 'Wide product coverage from strollers to skincare', 'Gifting appeal with premium packaging'],
-    messagingWatch: 'Baby nutrition, supplement, or developmental health product entry.',
-    researchTests: 'International brand authority vs Indian brand warmth for Indian parent audience.',
+  mothersparsh: {
+    reason: 'Indian natural baby care brand with strong plant-based positioning. Growing digital-first presence targeting new parents.',
+    threats: ['Natural/pure ingredient messaging resonates with the same parent audience', 'Aggressive Meta ad spend with emotional storytelling', 'Expanding from wipes into full baby care range'],
+    messagingWatch: 'Entry into baby nutrition, immunity, or developmental supplements.',
+    researchTests: 'Plant-based purity claims vs wellness supplement authority for Indian millennial parents.',
   },
 
   // ── Little Joys: Platform ─────────────────────────────────────────────────
